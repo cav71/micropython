@@ -49,6 +49,7 @@
 #include "i2c.h"
 #include "spi.h"
 #include "uart.h"
+#include "can.h"
 #include "adc.h"
 #include "storage.h"
 #include "sdcard.h"
@@ -87,9 +88,18 @@ STATIC NORETURN mp_obj_t pyb_bootloader(void) {
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_0(pyb_bootloader_obj, pyb_bootloader);
 
+/// \function hard_reset()
+/// Resets the pyboard in a manner similar to pushing the external RESET
+/// button.
+STATIC mp_obj_t pyb_hard_reset(void) {
+    NVIC_SystemReset();
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_0(pyb_hard_reset_obj, pyb_hard_reset);
+
 /// \function info([dump_alloc_table])
 /// Print out lots of information about the board.
-STATIC mp_obj_t pyb_info(uint n_args, const mp_obj_t *args) {
+STATIC mp_obj_t pyb_info(mp_uint_t n_args, const mp_obj_t *args) {
     // get and print unique id; 96 bits
     {
         byte *id = (byte*)0x1fff7a10;
@@ -123,9 +133,9 @@ STATIC mp_obj_t pyb_info(uint n_args, const mp_obj_t *args) {
 
     // qstr info
     {
-        uint n_pool, n_qstr, n_str_data_bytes, n_total_bytes;
+        mp_uint_t n_pool, n_qstr, n_str_data_bytes, n_total_bytes;
         qstr_pool_info(&n_pool, &n_qstr, &n_str_data_bytes, &n_total_bytes);
-        printf("qstr:\n  n_pool=%u\n  n_qstr=%u\n  n_str_data_bytes=%u\n  n_total_bytes=%u\n", n_pool, n_qstr, n_str_data_bytes, n_total_bytes);
+        printf("qstr:\n  n_pool=" UINT_FMT "\n  n_qstr=" UINT_FMT "\n  n_str_data_bytes=" UINT_FMT "\n  n_total_bytes=" UINT_FMT "\n", n_pool, n_qstr, n_str_data_bytes, n_total_bytes);
     }
 
     // GC info
@@ -163,19 +173,172 @@ STATIC mp_obj_t pyb_unique_id(void) {
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_0(pyb_unique_id_obj, pyb_unique_id);
 
-/// \function freq()
-/// Return a tuple of clock frequencies: (SYSCLK, HCLK, PCLK1, PCLK2).
-// TODO should also be able to set frequency via this function
-STATIC mp_obj_t pyb_freq(void) {
-    mp_obj_t tuple[4] = {
-       mp_obj_new_int(HAL_RCC_GetSysClockFreq()),
-       mp_obj_new_int(HAL_RCC_GetHCLKFreq()),
-       mp_obj_new_int(HAL_RCC_GetPCLK1Freq()),
-       mp_obj_new_int(HAL_RCC_GetPCLK2Freq()),
-    };
-    return mp_obj_new_tuple(4, tuple);
+// get or set the MCU frequencies
+STATIC mp_uint_t pyb_freq_calc_ahb_div(mp_uint_t wanted_div) {
+    if (wanted_div <= 1) { return RCC_SYSCLK_DIV1; }
+    else if (wanted_div <= 2) { return RCC_SYSCLK_DIV2; }
+    else if (wanted_div <= 4) { return RCC_SYSCLK_DIV4; }
+    else if (wanted_div <= 8) { return RCC_SYSCLK_DIV8; }
+    else if (wanted_div <= 16) { return RCC_SYSCLK_DIV16; }
+    else if (wanted_div <= 64) { return RCC_SYSCLK_DIV64; }
+    else if (wanted_div <= 128) { return RCC_SYSCLK_DIV128; }
+    else if (wanted_div <= 256) { return RCC_SYSCLK_DIV256; }
+    else { return RCC_SYSCLK_DIV512; }
 }
-STATIC MP_DEFINE_CONST_FUN_OBJ_0(pyb_freq_obj, pyb_freq);
+STATIC mp_uint_t pyb_freq_calc_apb_div(mp_uint_t wanted_div) {
+    if (wanted_div <= 1) { return RCC_HCLK_DIV1; }
+    else if (wanted_div <= 2) { return RCC_HCLK_DIV2; }
+    else if (wanted_div <= 4) { return RCC_HCLK_DIV4; }
+    else if (wanted_div <= 8) { return RCC_HCLK_DIV8; }
+    else { return RCC_SYSCLK_DIV16; }
+}
+STATIC mp_obj_t pyb_freq(mp_uint_t n_args, const mp_obj_t *args) {
+    if (n_args == 0) {
+        // get
+        mp_obj_t tuple[4] = {
+           mp_obj_new_int(HAL_RCC_GetSysClockFreq()),
+           mp_obj_new_int(HAL_RCC_GetHCLKFreq()),
+           mp_obj_new_int(HAL_RCC_GetPCLK1Freq()),
+           mp_obj_new_int(HAL_RCC_GetPCLK2Freq()),
+        };
+        return mp_obj_new_tuple(4, tuple);
+    } else {
+        // set
+        mp_int_t wanted_sysclk = mp_obj_get_int(args[0]) / 1000000;
+
+        // default PLL parameters that give 48MHz on PLL48CK
+        uint32_t m = HSE_VALUE / 1000000, n = 336, p = 2, q = 7;
+        uint32_t sysclk_source;
+
+        // the following logic assumes HSE < HSI
+        if (HSE_VALUE / 1000000 <= wanted_sysclk && wanted_sysclk < HSI_VALUE / 1000000) {
+            // use HSE as SYSCLK
+            sysclk_source = RCC_SYSCLKSOURCE_HSE;
+        } else if (HSI_VALUE / 1000000 <= wanted_sysclk && wanted_sysclk < 24) {
+            // use HSI as SYSCLK
+            sysclk_source = RCC_SYSCLKSOURCE_HSI;
+        } else {
+            // search for a valid PLL configuration that keeps USB at 48MHz
+            for (; wanted_sysclk > 0; wanted_sysclk--) {
+                for (p = 2; p <= 8; p += 2) {
+                    // compute VCO_OUT
+                    mp_uint_t vco_out = wanted_sysclk * p;
+                    // make sure VCO_OUT is between 192MHz and 432MHz
+                    if (vco_out < 192 || vco_out > 432) {
+                        continue;
+                    }
+                    // make sure Q is an integer
+                    if (vco_out % 48 != 0) {
+                        continue;
+                    }
+                    // solve for Q to get PLL48CK at 48MHz
+                    q = vco_out / 48;
+                    // make sure Q is in range
+                    if (q < 2 || q > 15) {
+                        continue;
+                    }
+                    // make sure N/M is an integer
+                    if (vco_out % (HSE_VALUE / 1000000) != 0) {
+                        continue;
+                    }
+                    // solve for N/M
+                    mp_uint_t n_by_m = vco_out / (HSE_VALUE / 1000000);
+                    // solve for M, making sure VCO_IN (=HSE/M) is between 1MHz and 2MHz
+                    m = 192 / n_by_m;
+                    while (m < (HSE_VALUE / 2000000) || n_by_m * m < 192) {
+                        m += 1;
+                    }
+                    if (m > (HSE_VALUE / 1000000)) {
+                        continue;
+                    }
+                    // solve for N
+                    n = n_by_m * m;
+                    // make sure N is in range
+                    if (n < 192 || n > 432) {
+                        continue;
+                    }
+
+                    // found values!
+                    sysclk_source = RCC_SYSCLKSOURCE_PLLCLK;
+                    goto set_clk;
+                }
+            }
+            nlr_raise(mp_obj_new_exception_msg(&mp_type_ValueError, "can't make valid freq"));
+        }
+
+    set_clk:
+        //printf("%lu %lu %lu %lu %lu\n", sysclk_source, m, n, p, q);
+
+        // let the USB CDC have a chance to process before we change the clock
+        HAL_Delay(USBD_CDC_POLLING_INTERVAL + 2);
+
+        // desired system clock source is in sysclk_source
+        RCC_ClkInitTypeDef RCC_ClkInitStruct;
+        RCC_ClkInitStruct.ClockType = (RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2);
+        if (sysclk_source == RCC_SYSCLKSOURCE_PLLCLK) {
+            // set HSE as system clock source to allow modification of the PLL configuration
+            // we then change to PLL after re-configuring PLL
+            RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSE;
+        } else {
+            // directly set the system clock source as desired
+            RCC_ClkInitStruct.SYSCLKSource = sysclk_source;
+        }
+        wanted_sysclk *= 1000000;
+        if (n_args >= 2) {
+            // note: AHB freq required to be >= 14.2MHz for USB operation
+            RCC_ClkInitStruct.AHBCLKDivider = pyb_freq_calc_ahb_div(wanted_sysclk / mp_obj_get_int(args[1]));
+        } else {
+            RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+        }
+        if (n_args >= 3) {
+            RCC_ClkInitStruct.APB1CLKDivider = pyb_freq_calc_apb_div(wanted_sysclk / mp_obj_get_int(args[2]));
+        } else {
+            RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+        }
+        if (n_args >= 4) {
+            RCC_ClkInitStruct.APB2CLKDivider = pyb_freq_calc_apb_div(wanted_sysclk / mp_obj_get_int(args[3]));
+        } else {
+            RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+        }
+        if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK) {
+            goto fail;
+        }
+
+        // re-configure PLL
+        // even if we don't use the PLL for the system clock, we still need it for USB, RNG and SDIO
+        RCC_OscInitTypeDef RCC_OscInitStruct;
+        RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+        RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+        RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+        RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+        RCC_OscInitStruct.PLL.PLLM = m;
+        RCC_OscInitStruct.PLL.PLLN = n;
+        RCC_OscInitStruct.PLL.PLLP = p;
+        RCC_OscInitStruct.PLL.PLLQ = q;
+        if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+            goto fail;
+        }
+
+        // set PLL as system clock source if wanted
+        if (sysclk_source == RCC_SYSCLKSOURCE_PLLCLK) {
+            RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_SYSCLK;
+            RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+            if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK) {
+                goto fail;
+            }
+        }
+
+        // re-init TIM3 for USB CDC rate
+        timer_tim3_init();
+
+        return mp_const_none;
+
+    fail:;
+        void NORETURN __fatal_error(const char *msg);
+        __fatal_error("can't change freq");
+    }
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(pyb_freq_obj, 0, 4, pyb_freq);
 
 /// \function sync()
 /// Sync all file systems.
@@ -188,15 +351,9 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_0(pyb_sync_obj, pyb_sync);
 /// \function millis()
 /// Returns the number of milliseconds since the board was last reset.
 ///
-/// Note that this may return a negative number. This allows you to always
-/// do:
-///     start = pyb.millis()
-///     ...do some operation...
-///     elapsed = pyb.millis() - start
-///
-/// and as long as the time of your operation is less than 24 days, you'll
-/// always get the right answer and not have to worry about whether pyb.millis()
-/// wraps around.
+/// The result is always a micropython smallint (31-bit signed number), so
+/// after 2^30 milliseconds (about 12.4 days) this will start to return
+/// negative numbers.
 STATIC mp_obj_t pyb_millis(void) {
     // We want to "cast" the 32 bit unsigned into a small-int.  This means
     // copying the MSB down 1 bit (extending the sign down), which is
@@ -205,18 +362,29 @@ STATIC mp_obj_t pyb_millis(void) {
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_0(pyb_millis_obj, pyb_millis);
 
+/// \function elapsed_millis(start)
+/// Returns the number of milliseconds which have elapsed since `start`.
+///
+/// This function takes care of counter wrap, and always returns a positive
+/// number. This means it can be used to measure periods upto about 12.4 days.
+///
+/// Example:
+///     start = pyb.millis()
+///     while pyb.elapsed_millis(start) < 1000:
+///         # Perform some operation
+STATIC mp_obj_t pyb_elapsed_millis(mp_obj_t start) {
+    uint32_t startMillis = mp_obj_get_int(start);
+    uint32_t currMillis = HAL_GetTick();
+    return MP_OBJ_NEW_SMALL_INT((currMillis - startMillis) & 0x3fffffff);
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(pyb_elapsed_millis_obj, pyb_elapsed_millis);
+
 /// \function micros()
 /// Returns the number of microseconds since the board was last reset.
 ///
-/// Note that this may return a negative number. This allows you to always
-/// do:
-///     start = pyb.micros()
-///     ...do some operation...
-///     elapsed = pyb.micros() - start
-///
-/// and as long as the time of your operation is less than 35 minutes, you'll
-/// always get the right answer and not have to worry about whether pyb.micros()
-/// wraps around.
+/// The result is always a micropython smallint (31-bit signed number), so
+/// after 2^30 microseconds (about 17.8 minutes) this will start to return
+/// negative numbers.
 STATIC mp_obj_t pyb_micros(void) {
     // We want to "cast" the 32 bit unsigned into a small-int.  This means
     // copying the MSB down 1 bit (extending the sign down), which is
@@ -224,6 +392,23 @@ STATIC mp_obj_t pyb_micros(void) {
     return MP_OBJ_NEW_SMALL_INT(sys_tick_get_microseconds());
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_0(pyb_micros_obj, pyb_micros);
+
+/// \function elapsed_micros(start)
+/// Returns the number of microseconds which have elapsed since `start`.
+///
+/// This function takes care of counter wrap, and always returns a positive
+/// number. This means it can be used to measure periods upto about 17.8 minutes.
+///
+/// Example:
+///     start = pyb.micros()
+///     while pyb.elapsed_micros(start) < 1000:
+///         # Perform some operation
+STATIC mp_obj_t pyb_elapsed_micros(mp_obj_t start) {
+    uint32_t startMicros = mp_obj_get_int(start);
+    uint32_t currMicros = sys_tick_get_microseconds();
+    return MP_OBJ_NEW_SMALL_INT((currMicros - startMicros) & 0x3fffffff);
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(pyb_elapsed_micros_obj, pyb_elapsed_micros);
 
 /// \function delay(ms)
 /// Delay for the given number of milliseconds.
@@ -241,67 +426,42 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_1(pyb_delay_obj, pyb_delay);
 STATIC mp_obj_t pyb_udelay(mp_obj_t usec_in) {
     mp_int_t usec = mp_obj_get_int(usec_in);
     if (usec > 0) {
-        uint32_t count = 0;
-        const uint32_t utime = (168 * usec / 4);
-        while (++count <= utime) {
-        }
+        sys_tick_udelay(usec);
     }
     return mp_const_none;
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_1(pyb_udelay_obj, pyb_udelay);
 
-#if 0
-STATIC void SYSCLKConfig_STOP(void) {
-    /* After wake-up from STOP reconfigure the system clock */
-    /* Enable HSE */
-    RCC_HSEConfig(RCC_HSE_ON);
-
-    /* Wait till HSE is ready */
-    while (RCC_GetFlagStatus(RCC_FLAG_HSERDY) == RESET) {
-    }
-
-    /* Enable PLL */
-    RCC_PLLCmd(ENABLE);
-
-    /* Wait till PLL is ready */
-    while (RCC_GetFlagStatus(RCC_FLAG_PLLRDY) == RESET) {
-    }
-
-    /* Select PLL as system clock source */
-    RCC_SYSCLKConfig(RCC_SYSCLKSource_PLLCLK);
-
-    /* Wait till PLL is used as system clock source */
-    while (RCC_GetSYSCLKSource() != 0x08) {
-    }
-}
-#endif
-
+/// \function stop()
 STATIC mp_obj_t pyb_stop(void) {
-#if 0
-    PWR_EnterSTANDBYMode();
-    //PWR_FlashPowerDownCmd(ENABLE); don't know what the logic is with this
+    HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
 
-    /* Enter Stop Mode */
-    PWR_EnterSTOPMode(PWR_Regulator_LowPower, PWR_STOPEntry_WFI);
+    // reconfigure the system clock after waking up
 
-    /* Configures system clock after wake-up from STOP: enable HSE, PLL and select
-     *        PLL as system clock source (HSE and PLL are disabled in STOP mode) */
-    SYSCLKConfig_STOP();
+    // enable HSE
+    __HAL_RCC_HSE_CONFIG(RCC_HSE_ON);
+    while (!__HAL_RCC_GET_FLAG(RCC_FLAG_HSERDY)) {
+    }
 
-    //PWR_FlashPowerDownCmd(DISABLE);
-#endif
+    // enable PLL
+    __HAL_RCC_PLL_ENABLE();
+    while (!__HAL_RCC_GET_FLAG(RCC_FLAG_PLLRDY)) {
+    }
+
+    // select PLL as system clock source
+    MODIFY_REG(RCC->CFGR, RCC_CFGR_SW, RCC_SYSCLKSOURCE_PLLCLK);
+    while (__HAL_RCC_GET_SYSCLK_SOURCE() != RCC_CFGR_SWS_PLL) {
+    }
+
     return mp_const_none;
 }
-
 MP_DEFINE_CONST_FUN_OBJ_0(pyb_stop_obj, pyb_stop);
 
+/// \function standby()
 STATIC mp_obj_t pyb_standby(void) {
-#if 0
-    PWR_EnterSTANDBYMode();
-#endif
+    HAL_PWR_EnterSTANDBYMode();
     return mp_const_none;
 }
-
 MP_DEFINE_CONST_FUN_OBJ_0(pyb_standby_obj, pyb_standby);
 
 /// \function have_cdc()
@@ -313,7 +473,7 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_0(pyb_have_cdc_obj, pyb_have_cdc);
 
 /// \function repl_uart(uart)
 /// Get or set the UART object that the REPL is repeated on.
-STATIC mp_obj_t pyb_repl_uart(uint n_args, const mp_obj_t *args) {
+STATIC mp_obj_t pyb_repl_uart(mp_uint_t n_args, const mp_obj_t *args) {
     if (n_args == 0) {
         if (pyb_stdio_uart == NULL) {
             return mp_const_none;
@@ -356,6 +516,7 @@ STATIC const mp_map_elem_t pyb_module_globals_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR___name__), MP_OBJ_NEW_QSTR(MP_QSTR_pyb) },
 
     { MP_OBJ_NEW_QSTR(MP_QSTR_bootloader), (mp_obj_t)&pyb_bootloader_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_hard_reset), (mp_obj_t)&pyb_hard_reset_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_info), (mp_obj_t)&pyb_info_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_unique_id), (mp_obj_t)&pyb_unique_id_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_freq), (mp_obj_t)&pyb_freq_obj },
@@ -376,7 +537,9 @@ STATIC const mp_map_elem_t pyb_module_globals_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR_USB_VCP), (mp_obj_t)&pyb_usb_vcp_type },
 
     { MP_OBJ_NEW_QSTR(MP_QSTR_millis), (mp_obj_t)&pyb_millis_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_elapsed_millis), (mp_obj_t)&pyb_elapsed_millis_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_micros), (mp_obj_t)&pyb_micros_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_elapsed_micros), (mp_obj_t)&pyb_elapsed_micros_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_delay), (mp_obj_t)&pyb_delay_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_udelay), (mp_obj_t)&pyb_udelay_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_sync), (mp_obj_t)&pyb_sync_obj },
@@ -412,6 +575,9 @@ STATIC const mp_map_elem_t pyb_module_globals_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR_I2C), (mp_obj_t)&pyb_i2c_type },
     { MP_OBJ_NEW_QSTR(MP_QSTR_SPI), (mp_obj_t)&pyb_spi_type },
     { MP_OBJ_NEW_QSTR(MP_QSTR_UART), (mp_obj_t)&pyb_uart_type },
+#if MICROPY_HW_ENABLE_CAN
+    { MP_OBJ_NEW_QSTR(MP_QSTR_CAN), (mp_obj_t)&pyb_can_type },
+#endif
 
     { MP_OBJ_NEW_QSTR(MP_QSTR_ADC), (mp_obj_t)&pyb_adc_type },
     { MP_OBJ_NEW_QSTR(MP_QSTR_ADCAll), (mp_obj_t)&pyb_adc_all_type },
@@ -429,16 +595,7 @@ STATIC const mp_map_elem_t pyb_module_globals_table[] = {
 #endif
 };
 
-STATIC const mp_obj_dict_t pyb_module_globals = {
-    .base = {&mp_type_dict},
-    .map = {
-        .all_keys_are_qstrs = 1,
-        .table_is_fixed_array = 1,
-        .used = MP_ARRAY_SIZE(pyb_module_globals_table),
-        .alloc = MP_ARRAY_SIZE(pyb_module_globals_table),
-        .table = (mp_map_elem_t*)pyb_module_globals_table,
-    },
-};
+STATIC MP_DEFINE_CONST_DICT(pyb_module_globals, pyb_module_globals_table);
 
 const mp_obj_module_t pyb_module = {
     .base = { &mp_type_module },

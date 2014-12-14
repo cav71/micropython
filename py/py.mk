@@ -15,6 +15,7 @@ PY_O_BASENAME = \
 	nlrx86.o \
 	nlrx64.o \
 	nlrthumb.o \
+	nlrxtensa.o \
 	nlrsetjmp.o \
 	malloc.o \
 	gc.o \
@@ -90,11 +91,10 @@ PY_O_BASENAME = \
 	sequence.o \
 	stream.o \
 	binary.o \
-	builtin.o \
 	builtinimport.o \
 	builtinevex.o \
-	builtintables.o \
 	modarray.o \
+	modbuiltins.o \
 	modcollections.o \
 	modgc.o \
 	modio.o \
@@ -111,8 +111,12 @@ PY_O_BASENAME = \
 	pfenv.o \
 	pfenv_printf.o \
 	../extmod/moductypes.o \
-	../extmod/modzlibd.o \
 	../extmod/modujson.o \
+	../extmod/modure.o \
+	../extmod/moduzlib.o \
+	../extmod/moduheapq.o \
+	../extmod/moduhashlib.o \
+	../extmod/modubinascii.o \
 
 # prepend the build destination prefix to the py object files
 PY_O = $(addprefix $(PY_BUILD)/, $(PY_O_BASENAME))
@@ -121,7 +125,7 @@ PY_O = $(addprefix $(PY_BUILD)/, $(PY_O_BASENAME))
 FORCE:
 .PHONY: FORCE
 
-$(HEADER_BUILD)/py-version.h: FORCE
+$(HEADER_BUILD)/py-version.h: FORCE | $(HEADER_BUILD)
 	$(Q)$(PY_SRC)/py-version.sh > $@.tmp
 	$(Q)if [ -f "$@" ] && cmp -s $@ $@.tmp; then rm $@.tmp; else echo "Generating $@"; mv $@.tmp $@; fi
 
@@ -134,13 +138,6 @@ $(HEADER_BUILD)/qstrdefs.generated.h: $(PY_QSTR_DEFS) $(QSTR_DEFS) $(PY_SRC)/mak
 	$(Q)$(CPP) $(CFLAGS) $(PY_QSTR_DEFS) -o $(HEADER_BUILD)/qstrdefs.preprocessed.h
 	$(ECHO) "makeqstrdata $(PY_QSTR_DEFS) $(QSTR_DEFS)"
 	$(Q)$(PYTHON) $(PY_SRC)/makeqstrdata.py $(HEADER_BUILD)/qstrdefs.preprocessed.h $(QSTR_DEFS) > $@
-
-# We don't know which source files actually need the generated.h (since
-# it is #included from str.h). The compiler generated dependencies will cause
-# the right .o's to get recompiled if the generated.h file changes. Adding
-# an order-only dependendency to all of the .o's will cause the generated .h
-# to get built before we try to compile any of them.
-$(PY_O): | $(HEADER_BUILD)/qstrdefs.generated.h $(HEADER_BUILD)/py-version.h
 
 # emitters
 
@@ -165,4 +162,3 @@ $(PY_BUILD)/gc.o: CFLAGS += $(CSUPEROPT)
 
 # optimising vm for speed, adds only a small amount to code size but makes a huge difference to speed (20% faster)
 $(PY_BUILD)/vm.o: CFLAGS += $(CSUPEROPT)
-

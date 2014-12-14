@@ -5,7 +5,7 @@
 The Micro Python project
 ========================
 <p align="center">
-  <img src="https://raw2.github.com/micropython/micropython/master/logo/upython-with-micro.jpg" alt="MicroPython Logo"/>
+  <img src="https://raw.githubusercontent.com/micropython/micropython/master/logo/upython-with-micro.jpg" alt="MicroPython Logo"/>
 </p>
 
 This is the Micro Python project, which aims to put an implementation
@@ -49,23 +49,28 @@ The Unix version
 
 The "unix" port requires a standard Unix environment with gcc and GNU make.
 x86 and x64 architectures are supported (i.e. x86 32- and 64-bit), as well
-as ARMv7. Porting to other architectures require writing some assembly code
-for the exception handling.
+as ARM and MIPS. Making full-featured port to another architecture requires
+writing some assembly code for the exception handling and garbage collection.
+Alternatively, fallback implementation based on setjmp/longjmp can be used.
 
 To build:
 
     $ cd unix
     $ make
 
-Then to test it:
+Then to give it a try:
 
     $ ./micropython
     >>> list(5 * x + y for x in range(10) for y in [4, 2, 1])
 
+Run complete testsuite:
+
+    $ make test
+
 Debian/Ubuntu/Mint derivative Linux distros will require build-essentials and
 libreadline-dev packages installed. To build FFI (Foreign Function Interface)
-module, libffi-dev package is required. If you have problems with some
-dependencies, they can be disabled in unix/mpconfigport.mk .
+module, libffi-dev and pkg-config packages are required. If you have problems
+with some dependencies, they can be disabled in unix/mpconfigport.mk .
 
 The STM version
 ---------------
@@ -93,3 +98,18 @@ AUR.  If the above does not work it may be because you don't have the
 correct permissions.  Try then:
 
     $ sudo dfu-util -a 0 -d 0483:df11 -D build-PYBV10/firmware.dfu
+
+Building the documentation locally
+----------------------------------
+
+Install Sphinx, and optionally (for the RTD-styling), sphinx_rtd_theme,
+preferably in a virtualenv:
+
+     pip install sphinx
+     pip install sphinx_rtd_theme
+
+In `micropython/docs`, build the docs:
+
+    make html
+
+You'll find the index page at `micropython/docs/build/html/index.html`.

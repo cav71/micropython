@@ -30,6 +30,7 @@
 #if MICROPY_HELPER_LEXER_UNIX
 
 #include <stdio.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -69,7 +70,10 @@ STATIC void file_buf_close(mp_lexer_file_buf_t *fb) {
 }
 
 mp_lexer_t *mp_lexer_new_from_file(const char *filename) {
-    mp_lexer_file_buf_t *fb = m_new_obj(mp_lexer_file_buf_t);
+    mp_lexer_file_buf_t *fb = m_new_obj_maybe(mp_lexer_file_buf_t);
+    if (fb == NULL) {
+        return NULL;
+    }
     fb->fd = open(filename, O_RDONLY);
     if (fb->fd < 0) {
         m_del_obj(mp_lexer_file_buf_t, fb);

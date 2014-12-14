@@ -26,10 +26,12 @@
 
 #include <assert.h>
 #include <string.h>
+#include <stdint.h>
 
 #include "mpconfig.h"
 #include "misc.h"
 #include "qstr.h"
+#include "gc.h"
 
 // NOTE: we are using linear arrays to store and search for qstr's (unique strings, interned strings)
 // ultimately we will replace this with a static hash table of some kind
@@ -55,7 +57,7 @@
 #define Q_GET_DATA(q)   ((q) + 4)
 
 // this must match the equivalent function in makeqstrdata.py
-mp_uint_t qstr_compute_hash(const byte *data, uint len) {
+mp_uint_t qstr_compute_hash(const byte *data, mp_uint_t len) {
     // djb2 algorithm; see http://www.cse.yorku.ca/~oz/hash.html
     mp_uint_t hash = 5381;
     for (const byte *top = data + len; data < top; data++) {
@@ -71,9 +73,9 @@ mp_uint_t qstr_compute_hash(const byte *data, uint len) {
 
 typedef struct _qstr_pool_t {
     struct _qstr_pool_t *prev;
-    uint total_prev_len;
-    uint alloc;
-    uint len;
+    mp_uint_t total_prev_len;
+    mp_uint_t alloc;
+    mp_uint_t len;
     const byte *qstrs[];
 } qstr_pool_t;
 
@@ -130,7 +132,7 @@ STATIC qstr qstr_add(const byte *q_ptr) {
     return last_pool->total_prev_len + last_pool->len - 1;
 }
 
-qstr qstr_find_strn(const char *str, uint str_len) {
+qstr qstr_find_strn(const char *str, mp_uint_t str_len) {
     // work out hash of str
     mp_uint_t str_hash = qstr_compute_hash((const byte*)str, str_len);
 
@@ -151,7 +153,7 @@ qstr qstr_from_str(const char *str) {
     return qstr_from_strn(str, strlen(str));
 }
 
-qstr qstr_from_strn(const char *str, uint len) {
+qstr qstr_from_strn(const char *str, mp_uint_t len) {
     qstr q = qstr_find_strn(str, len);
     if (q == 0) {
         mp_uint_t hash = qstr_compute_hash((const byte*)str, len);
@@ -167,7 +169,7 @@ qstr qstr_from_strn(const char *str, uint len) {
     return q;
 }
 
-byte *qstr_build_start(uint len, byte **q_ptr) {
+byte *qstr_build_start(mp_uint_t len, byte **q_ptr) {
     assert(len <= 65535);
     *q_ptr = m_new(byte, 4 + len + 1);
     (*q_ptr)[2] = len;
@@ -194,7 +196,7 @@ mp_uint_t qstr_hash(qstr q) {
     return Q_GET_HASH(find_qstr(q));
 }
 
-uint qstr_len(qstr q) {
+mp_uint_t qstr_len(qstr q) {
     const byte *qd = find_qstr(q);
     return Q_GET_LENGTH(qd);
 }
@@ -205,13 +207,13 @@ const char *qstr_str(qstr q) {
     return (const char*)Q_GET_DATA(qd);
 }
 
-const byte *qstr_data(qstr q, uint *len) {
+const byte *qstr_data(qstr q, mp_uint_t *len) {
     const byte *qd = find_qstr(q);
     *len = Q_GET_LENGTH(qd);
     return Q_GET_DATA(qd);
 }
 
-void qstr_pool_info(uint *n_pool, uint *n_qstr, uint *n_str_data_bytes, uint *n_total_bytes) {
+void qstr_pool_info(mp_uint_t *n_pool, mp_uint_t *n_qstr, mp_uint_t *n_str_data_bytes, mp_uint_t *n_total_bytes) {
     *n_pool = 0;
     *n_qstr = 0;
     *n_str_data_bytes = 0;
@@ -220,9 +222,17 @@ void qstr_pool_info(uint *n_pool, uint *n_qstr, uint *n_str_data_bytes, uint *n_
         *n_pool += 1;
         *n_qstr += pool->len;
         for (const byte **q = pool->qstrs, **q_top = pool->qstrs + pool->len; q < q_top; q++) {
+            #if MICROPY_ENABLE_GC
+            *n_str_data_bytes += gc_nbytes(*q); // this counts actual bytes used in heap
+            #else
             *n_str_data_bytes += Q_GET_ALLOC(*q);
+            #endif
         }
+        #if MICROPY_ENABLE_GC
+        *n_total_bytes += gc_nbytes(pool); // this counts actual bytes used in heap
+        #else
         *n_total_bytes += sizeof(qstr_pool_t) + sizeof(qstr) * pool->alloc;
+        #endif
     }
     *n_total_bytes += *n_str_data_bytes;
 }

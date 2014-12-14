@@ -62,12 +62,10 @@
 #include "accel.h"
 #include "servo.h"
 #include "dac.h"
-#include "pybwlan.h"
 #include "pybstdio.h"
+#include "modnetwork.h"
 
 void SystemClock_Config(void);
-
-int errno;
 
 static FATFS fatfs0;
 #if MICROPY_HW_HAS_SDCARD
@@ -139,17 +137,17 @@ STATIC mp_obj_t pyb_usb_mode(mp_obj_t usb_mode) {
 MP_DEFINE_CONST_FUN_OBJ_1(pyb_usb_mode_obj, pyb_usb_mode);
 
 static const char fresh_boot_py[] =
-"# boot.py -- run on boot-up\n"
-"# can run arbitrary Python, but best to keep it minimal\n"
-"\n"
-"import pyb\n"
-"#pyb.main('main.py') # main script to run after this one\n"
-"#pyb.usb_mode('CDC+MSC') # act as a serial and a storage device\n"
-"#pyb.usb_mode('CDC+HID') # act as a serial device and a mouse\n"
+"# boot.py -- run on boot-up\r\n"
+"# can run arbitrary Python, but best to keep it minimal\r\n"
+"\r\n"
+"import pyb\r\n"
+"#pyb.main('main.py') # main script to run after this one\r\n"
+"#pyb.usb_mode('CDC+MSC') # act as a serial and a storage device\r\n"
+"#pyb.usb_mode('CDC+HID') # act as a serial device and a mouse\r\n"
 ;
 
 static const char fresh_main_py[] =
-"# main.py -- put your code here!\n"
+"# main.py -- put your code here!\r\n"
 ;
 
 static const char fresh_pybcdc_inf[] =
@@ -174,9 +172,9 @@ static const char fresh_readme_txt[] =
 int main(void) {
     // TODO disable JTAG
 
-    // Stack limit should be less than real stack size, so we
-    // had chance to recover from limit hit.
-    mp_stack_set_limit(&_ram_end - &_heap_end - 512);
+    // Stack limit should be less than real stack size, so we have a chance
+    // to recover from limit hit.  (Limit is measured in bytes.)
+    mp_stack_set_limit((char*)&_ram_end - (char*)&_heap_end - 1024);
 
     /* STM32F4xx HAL library initialization:
          - Configure the Flash prefetch, instruction and Data caches
@@ -322,6 +320,7 @@ soft_reset:
     pin_init0();
     extint_init0();
     timer_init0();
+    uart_init0();
 
 #if MICROPY_HW_ENABLE_RNG
     rng_init0();
@@ -349,6 +348,9 @@ soft_reset:
             } else {
                 __fatal_error("could not create LFS");
             }
+
+            // set label
+            f_setlabel("/flash/pybflash");
 
             // create empty main.py
             FIL fp;
@@ -456,7 +458,11 @@ soft_reset:
         const char *boot_py = "boot.py";
         FRESULT res = f_stat(boot_py, NULL);
         if (res == FR_OK) {
-            if (!pyexec_file(boot_py)) {
+            int ret = pyexec_file(boot_py);
+            if (ret & PYEXEC_FORCED_EXIT) {
+                goto soft_reset_exit;
+            }
+            if (!ret) {
                 flash_error(4);
             }
         }
@@ -501,11 +507,7 @@ soft_reset:
     dac_init();
 #endif
 
-#if MICROPY_HW_ENABLE_CC3K
-    // wifi using the CC3000 driver
-    pyb_wlan_init();
-    pyb_wlan_start();
-#endif
+    mod_network_init();
 
     // At this point everything is fully configured and initialised.
 
@@ -519,7 +521,11 @@ soft_reset:
         }
         FRESULT res = f_stat(main_py, NULL);
         if (res == FR_OK) {
-            if (!pyexec_file(main_py)) {
+            int ret = pyexec_file(main_py);
+            if (ret & PYEXEC_FORCED_EXIT) {
+                goto soft_reset_exit;
+            }
+            if (!ret) {
                 flash_error(3);
             }
         }
@@ -539,6 +545,8 @@ soft_reset:
         }
     }
 
+soft_reset_exit:
+
     // soft reset
 
     printf("PYB: sync filesystems\n");
@@ -546,6 +554,7 @@ soft_reset:
 
     printf("PYB: soft reboot\n");
     timer_deinit();
+    uart_deinit();
 
     first_soft_reset = false;
     goto soft_reset;

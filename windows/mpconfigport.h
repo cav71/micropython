@@ -46,20 +46,32 @@
 #define MICROPY_LONGINT_IMPL        (MICROPY_LONGINT_IMPL_MPZ)
 #define MICROPY_STREAMS_NON_BLOCK   (1)
 #define MICROPY_OPT_COMPUTED_GOTO   (0)
-#define MICROPY_PY_BUILTINS_STR_UNICODE (0)
+#define MICROPY_CAN_OVERRIDE_BUILTINS (1)
+#define MICROPY_PY_BUILTINS_STR_UNICODE (1)
+#define MICROPY_PY_BUILTINS_MEMORYVIEW (1)
 #define MICROPY_PY_BUILTINS_FROZENSET (1)
+#define MICROPY_PY_BUILTINS_COMPILE (1)
 #define MICROPY_PY_SYS_EXIT         (1)
 #define MICROPY_PY_SYS_PLATFORM     "win32"
+#define MICROPY_PY_SYS_MAXSIZE      (1)
 #define MICROPY_PY_SYS_STDFILES     (1)
 #define MICROPY_PY_CMATH            (1)
 #define MICROPY_PY_IO_FILEIO        (1)
 #define MICROPY_PY_GC_COLLECT_RETVAL (1)
+
 #define MICROPY_PY_UCTYPES          (1)
-#define MICROPY_PY_ZLIBD            (1)
+#define MICROPY_PY_UZLIB            (1)
+#define MICROPY_PY_UJSON            (1)
+#define MICROPY_PY_URE              (1)
+#define MICROPY_PY_UHEAPQ           (1)
+
 #define MICROPY_ERROR_REPORTING     (MICROPY_ERROR_REPORTING_DETAILED)
 #ifdef _MSC_VER
 #define MICROPY_GCREGS_SETJMP       (1)
 #endif
+
+#define MICROPY_ENABLE_EMERGENCY_EXCEPTION_BUF   (1)
+#define MICROPY_EMERGENCY_EXCEPTION_BUF_SIZE     (256)
 
 #define MICROPY_PORT_INIT_FUNC      init()
 #define MICROPY_PORT_DEINIT_FUNC    deinit()
@@ -81,16 +93,31 @@ typedef unsigned int mp_uint_t; // must be pointer size
 
 #define BYTES_PER_WORD sizeof(mp_int_t)
 
+// Just assume Windows is little-endian - mingw32 gcc doesn't
+// define standard endianness macros.
+#define MP_ENDIANNESS_LITTLE (1)
+
+// Cannot include <sys/types.h>, as it may lead to symbol name clashes
+#if _FILE_OFFSET_BITS == 64 && !defined(__LP64__)
+typedef long long mp_off_t;
+#else
+typedef long mp_off_t;
+#endif
+
 typedef void *machine_ptr_t; // must be of pointer size
 typedef const void *machine_const_ptr_t; // must be of pointer size
 
+extern const struct _mp_obj_fun_builtin_t mp_builtin_input_obj;
 extern const struct _mp_obj_fun_builtin_t mp_builtin_open_obj;
 #define MICROPY_PORT_BUILTINS \
+    { MP_OBJ_NEW_QSTR(MP_QSTR_input), (mp_obj_t)&mp_builtin_input_obj }, \
     { MP_OBJ_NEW_QSTR(MP_QSTR_open), (mp_obj_t)&mp_builtin_open_obj },
 
+extern const struct _mp_obj_module_t mp_module_os;
 extern const struct _mp_obj_module_t mp_module_time;
 #define MICROPY_PORT_BUILTIN_MODULES \
     { MP_OBJ_NEW_QSTR(MP_QSTR_time), (mp_obj_t)&mp_module_time }, \
+    { MP_OBJ_NEW_QSTR(MP_QSTR__os), (mp_obj_t)&mp_module_os }, \
 
 // We need to provide a declaration/definition of alloca()
 #include <malloc.h>
@@ -113,8 +140,13 @@ void msec_sleep(double msec);
 
 // CL specific overrides from mpconfig
 
-#define NORETURN                   __declspec(noreturn)
-#define MICROPY_PORT_CONSTANTS     { "dummy", 0 } //can't have zero-sized array
+#define NORETURN                    __declspec(noreturn)
+#define MICROPY_PORT_CONSTANTS      { "dummy", 0 } //can't have zero-sized array
+#ifdef _WIN64
+#define MP_SSIZE_MAX                _I64_MAX
+#else
+#define MP_SSIZE_MAX                _I32_MAX
+#endif
 
 
 // CL specific definitions

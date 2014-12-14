@@ -14,6 +14,7 @@
 #include "runtime0.h"
 #include "runtime.h"
 #include "repl.h"
+#include "pfenv.h"
 
 void do_str(const char *src) {
     mp_lexer_t *lex = mp_lexer_new_from_str_len(MP_QSTR__lt_stdin_gt_, src, strlen(src), 0);
@@ -32,13 +33,13 @@ void do_str(const char *src) {
     }
 
     // parse okay
-    qstr source_name = mp_lexer_source_name(lex);
+    qstr source_name = lex->source_name;
     mp_lexer_free(lex);
     mp_obj_t module_fun = mp_compile(pn, source_name, MP_EMIT_OPT_NONE, true);
-    mp_parse_node_free(pn);
 
-    if (module_fun == mp_const_none) {
+    if (mp_obj_is_exception_instance(module_fun)) {
         // compile error
+        mp_obj_print_exception(printf_wrapper, NULL, module_fun);
         return;
     }
 
@@ -48,7 +49,7 @@ void do_str(const char *src) {
         nlr_pop();
     } else {
         // uncaught exception
-        mp_obj_print_exception((mp_obj_t)nlr.ret_val);
+        mp_obj_print_exception(printf_wrapper, NULL, (mp_obj_t)nlr.ret_val);
     }
 }
 
@@ -70,13 +71,24 @@ mp_import_stat_t mp_import_stat(const char *path) {
     return MP_IMPORT_STAT_NO_EXIST;
 }
 
-mp_obj_t mp_builtin_open(uint n_args, const mp_obj_t *args) {
+mp_obj_t mp_builtin_open(uint n_args, const mp_obj_t *args, mp_map_t *kwargs) {
     return mp_const_none;
 }
-MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mp_builtin_open_obj, 1, 2, mp_builtin_open);
+MP_DEFINE_CONST_FUN_OBJ_KW(mp_builtin_open_obj, 1, mp_builtin_open);
 
 void nlr_jump_fail(void *val) {
 }
+
+void NORETURN __fatal_error(const char *msg) {
+    while (1);
+}
+
+#ifndef NDEBUG
+void MP_WEAK __assert_func(const char *file, int line, const char *func, const char *expr) {
+    printf("Assertion '%s' failed, at file %s:%d\n", expr, file, line);
+    __fatal_error("Assertion failed");
+}
+#endif
 
 /*
 int _lseek() {return 0;}

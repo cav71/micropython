@@ -91,41 +91,11 @@ STATIC void uni_print_quoted(void (*print)(void *env, const char *fmt, ...), voi
     print(env, "%c", quote_char);
 }
 
-#if MICROPY_PY_UJSON
-STATIC void uni_print_json(void (*print)(void *env, const char *fmt, ...), void *env, const byte *str_data, uint str_len) {
-    print(env, "\"");
-    const byte *s = str_data, *top = str_data + str_len;
-    while (s < top) {
-        unichar ch;
-        ch = utf8_get_char(s);
-        s = utf8_next_char(s);
-        if (ch == '"' || ch == '\\' || ch == '/') {
-            print(env, "\\%c", ch);
-        } else if (32 <= ch && ch <= 126) {
-            print(env, "%c", ch);
-        } else if (*s == '\b') {
-            print(env, "\\b");
-        } else if (*s == '\f') {
-            print(env, "\\f");
-        } else if (*s == '\n') {
-            print(env, "\\n");
-        } else if (*s == '\r') {
-            print(env, "\\r");
-        } else if (*s == '\t') {
-            print(env, "\\t");
-        } else {
-            print(env, "\\u%04x", ch);
-        }
-    }
-    print(env, "\"");
-}
-#endif
-
 STATIC void uni_print(void (*print)(void *env, const char *fmt, ...), void *env, mp_obj_t self_in, mp_print_kind_t kind) {
     GET_STR_DATA_LEN(self_in, str_data, str_len);
     #if MICROPY_PY_UJSON
     if (kind == PRINT_JSON) {
-        uni_print_json(print, env, str_data, str_len);
+        mp_str_print_json(print, env, str_data, str_len);
         return;
     }
     #endif
@@ -172,15 +142,18 @@ STATIC mp_obj_t str_make_new(mp_obj_t type_in, mp_uint_t n_args, mp_uint_t n_kw,
         case 3:
         {
             // TODO: validate 2nd/3rd args
-            if (!MP_OBJ_IS_TYPE(args[0], &mp_type_bytes)) {
-                nlr_raise(mp_obj_new_exception_msg(&mp_type_TypeError, "bytes expected"));
+            if (MP_OBJ_IS_TYPE(args[0], &mp_type_bytes)) {
+                GET_STR_DATA_LEN(args[0], str_data, str_len);
+                GET_STR_HASH(args[0], str_hash);
+                mp_obj_str_t *o = mp_obj_new_str_of_type(&mp_type_str, NULL, str_len);
+                o->data = str_data;
+                o->hash = str_hash;
+                return o;
+            } else {
+                mp_buffer_info_t bufinfo;
+                mp_get_buffer_raise(args[0], &bufinfo, MP_BUFFER_READ);
+                return mp_obj_new_str(bufinfo.buf, bufinfo.len, false);
             }
-            GET_STR_DATA_LEN(args[0], str_data, str_len);
-            GET_STR_HASH(args[0], str_hash);
-            mp_obj_str_t *o = mp_obj_new_str_of_type(&mp_type_str, NULL, str_len);
-            o->data = str_data;
-            o->hash = str_hash;
-            return o;
         }
 
         default:

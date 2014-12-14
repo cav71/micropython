@@ -108,15 +108,15 @@ except Exception:
 #except FutureWarning:
 #    print("Caught FutureWarning")
 
-try:
-    raise IOError
-except Exception:
-    print("Caught IOError via Exception")
+#try:
+#    raise IOError
+#except Exception:
+#    print("Caught IOError via Exception")
 
-try:
-    raise IOError
-except IOError:
-    print("Caught IOError")
+#try:
+#    raise IOError
+#except IOError:
+#    print("Caught IOError")
 
 try:
     raise ImportError
@@ -298,15 +298,15 @@ except SyntaxError:
 #except SyntaxWarning:
 #    print("Caught SyntaxWarning")
 
-try:
-    raise SystemError
-except Exception:
-    print("Caught SystemError via Exception")
+#try:
+#    raise SystemError
+#except Exception:
+#    print("Caught SystemError via Exception")
 
-try:
-    raise SystemError
-except SystemError:
-    print("Caught SystemError")
+#try:
+#    raise SystemError
+#except SystemError:
+#    print("Caught SystemError")
 
 #try:
 #    raise TabError

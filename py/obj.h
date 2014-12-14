@@ -97,8 +97,17 @@ typedef struct _mp_obj_base_t mp_obj_base_t;
 #define MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(obj_name, n_args_min, n_args_max, fun_name) MP_DEFINE_CONST_FUN_OBJ_VOID_PTR(obj_name, false, n_args_min, n_args_max, (mp_fun_var_t)fun_name)
 #define MP_DEFINE_CONST_FUN_OBJ_KW(obj_name, n_args_min, fun_name) MP_DEFINE_CONST_FUN_OBJ_VOID_PTR(obj_name, true, n_args_min, MP_OBJ_FUN_ARGS_MAX, (mp_fun_kw_t)fun_name)
 
-// This macro is used to define constant dict objects
+// These macros are used to define constant map/dict objects
 // You can put "static" in front of the definition to make it local
+
+#define MP_DEFINE_CONST_MAP(map_name, table_name) \
+    const mp_map_t map_name = { \
+        .all_keys_are_qstrs = 1, \
+        .table_is_fixed_array = 1, \
+        .used = MP_ARRAY_SIZE(table_name), \
+        .alloc = MP_ARRAY_SIZE(table_name), \
+        .table = (mp_map_elem_t*)table_name, \
+    }
 
 #define MP_DEFINE_CONST_DICT(dict_name, table_name) \
     const mp_obj_dict_t dict_name = { \
@@ -106,8 +115,8 @@ typedef struct _mp_obj_base_t mp_obj_base_t;
         .map = { \
             .all_keys_are_qstrs = 1, \
             .table_is_fixed_array = 1, \
-            .used = sizeof(table_name) / sizeof(mp_map_elem_t), \
-            .alloc = sizeof(table_name) / sizeof(mp_map_elem_t), \
+            .used = MP_ARRAY_SIZE(table_name), \
+            .alloc = MP_ARRAY_SIZE(table_name), \
             .table = (mp_map_elem_t*)table_name, \
         }, \
     }
@@ -147,6 +156,8 @@ typedef enum _mp_map_lookup_kind_t {
     MP_MAP_LOOKUP_ADD_IF_NOT_FOUND,   // 1
     MP_MAP_LOOKUP_REMOVE_IF_FOUND,    // 2
 } mp_map_lookup_kind_t;
+
+extern const mp_map_t mp_const_empty_map;
 
 static inline bool MP_MAP_SLOT_IS_FILLED(const mp_map_t *map, mp_uint_t pos) { return ((map)->table[pos].key != MP_OBJ_NULL && (map)->table[pos].key != MP_OBJ_SENTINEL); }
 
@@ -212,9 +223,9 @@ typedef struct _mp_buffer_info_t {
     // them with ver = sizeof(struct). Cons: overkill for *micro*?
     //int ver; // ?
 
-    void *buf;    // can be NULL if len == 0
-    mp_int_t len; // in bytes; TODO should it be mp_uint_t?
-    int typecode; // as per binary.h; TODO what is the correct type to use?
+    void *buf;      // can be NULL if len == 0
+    mp_uint_t len;  // in bytes
+    int typecode;   // as per binary.h
 
     // Rationale: to load arbitrary-sized sprites directly to LCD
     // Cons: a bit adhoc usecase
@@ -231,16 +242,25 @@ void mp_get_buffer_raise(mp_obj_t obj, mp_buffer_info_t *bufinfo, mp_uint_t flag
 
 // Stream protocol
 #define MP_STREAM_ERROR (-1)
-#define MP_STREAM_FLUSH (1)
-#define MP_STREAM_POLL  (2)
 typedef struct _mp_stream_p_t {
     // On error, functions should return MP_STREAM_ERROR and fill in *errcode (values
     // are implementation-dependent, but will be exposed to user, e.g. via exception).
     mp_uint_t (*read)(mp_obj_t obj, void *buf, mp_uint_t size, int *errcode);
     mp_uint_t (*write)(mp_obj_t obj, const void *buf, mp_uint_t size, int *errcode);
-    mp_uint_t (*ioctl)(mp_obj_t obj, mp_uint_t request, int *errcode, ...);
+    mp_uint_t (*ioctl)(mp_obj_t obj, mp_uint_t request, mp_uint_t arg, int *errcode);
     mp_uint_t is_text : 1; // default is bytes, set this for text stream
 } mp_stream_p_t;
+
+// Stream ioctl request codes
+#define MP_STREAM_FLUSH (1)
+#define MP_STREAM_SEEK  (2)
+#define MP_STREAM_POLL  (3)
+
+// Argument structure for MP_STREAM_SEEK
+struct mp_stream_seek_t {
+    mp_off_t offset;
+    int whence;
+};
 
 struct _mp_obj_type_t {
     mp_obj_base_t base;
@@ -292,6 +312,7 @@ extern const mp_obj_type_t mp_type_int;
 extern const mp_obj_type_t mp_type_str;
 extern const mp_obj_type_t mp_type_bytes;
 extern const mp_obj_type_t mp_type_bytearray;
+extern const mp_obj_type_t mp_type_memoryview;
 extern const mp_obj_type_t mp_type_float;
 extern const mp_obj_type_t mp_type_complex;
 extern const mp_obj_type_t mp_type_tuple;
@@ -326,10 +347,10 @@ extern const mp_obj_type_t mp_type_AttributeError;
 extern const mp_obj_type_t mp_type_EOFError;
 extern const mp_obj_type_t mp_type_Exception;
 extern const mp_obj_type_t mp_type_GeneratorExit;
-extern const mp_obj_type_t mp_type_IOError;
 extern const mp_obj_type_t mp_type_ImportError;
 extern const mp_obj_type_t mp_type_IndentationError;
 extern const mp_obj_type_t mp_type_IndexError;
+extern const mp_obj_type_t mp_type_KeyboardInterrupt;
 extern const mp_obj_type_t mp_type_KeyError;
 extern const mp_obj_type_t mp_type_LookupError;
 extern const mp_obj_type_t mp_type_MemoryError;
@@ -340,7 +361,6 @@ extern const mp_obj_type_t mp_type_OverflowError;
 extern const mp_obj_type_t mp_type_RuntimeError;
 extern const mp_obj_type_t mp_type_StopIteration;
 extern const mp_obj_type_t mp_type_SyntaxError;
-extern const mp_obj_type_t mp_type_SystemError;
 extern const mp_obj_type_t mp_type_SystemExit;
 extern const mp_obj_type_t mp_type_TypeError;
 extern const mp_obj_type_t mp_type_ValueError;
@@ -351,10 +371,12 @@ extern const mp_obj_type_t mp_type_ZeroDivisionError;
 #define mp_const_none ((mp_obj_t)&mp_const_none_obj)
 #define mp_const_false ((mp_obj_t)&mp_const_false_obj)
 #define mp_const_true ((mp_obj_t)&mp_const_true_obj)
+#define mp_const_empty_bytes ((mp_obj_t)&mp_const_empty_bytes_obj)
 #define mp_const_empty_tuple ((mp_obj_t)&mp_const_empty_tuple_obj)
 extern const struct _mp_obj_none_t mp_const_none_obj;
 extern const struct _mp_obj_bool_t mp_const_false_obj;
 extern const struct _mp_obj_bool_t mp_const_true_obj;
+extern const struct _mp_obj_str_t mp_const_empty_bytes_obj;
 extern const struct _mp_obj_tuple_t mp_const_empty_tuple_obj;
 extern const struct _mp_obj_ellipsis_t mp_const_ellipsis_obj;
 extern const struct _mp_obj_exception_t mp_const_MemoryError_obj;
@@ -373,6 +395,8 @@ mp_obj_t mp_obj_new_int_from_ll(long long val); // this must return a multi-prec
 mp_obj_t mp_obj_new_int_from_ull(unsigned long long val); // this must return a multi-precision integer object (or raise an overflow exception)
 mp_obj_t mp_obj_new_str(const char* data, mp_uint_t len, bool make_qstr_if_not_already);
 mp_obj_t mp_obj_new_bytes(const byte* data, mp_uint_t len);
+mp_obj_t mp_obj_new_bytearray(mp_uint_t n, void *items);
+mp_obj_t mp_obj_new_bytearray_by_ref(mp_uint_t n, void *items);
 #if MICROPY_PY_BUILTINS_FLOAT
 mp_obj_t mp_obj_new_float(mp_float_t val);
 mp_obj_t mp_obj_new_complex(mp_float_t real, mp_float_t imag);
@@ -382,7 +406,7 @@ mp_obj_t mp_obj_new_exception_arg1(const mp_obj_type_t *exc_type, mp_obj_t arg);
 mp_obj_t mp_obj_new_exception_args(const mp_obj_type_t *exc_type, mp_uint_t n_args, const mp_obj_t *args);
 mp_obj_t mp_obj_new_exception_msg(const mp_obj_type_t *exc_type, const char *msg);
 mp_obj_t mp_obj_new_exception_msg_varg(const mp_obj_type_t *exc_type, const char *fmt, ...); // counts args by number of % symbols in fmt, excluding %%; can only handle void* sizes (ie no float/double!)
-mp_obj_t mp_obj_new_fun_bc(mp_uint_t scope_flags, qstr *args, mp_uint_t n_pos_args, mp_uint_t n_kwonly_args, mp_obj_t def_args, mp_obj_t def_kw_args, const byte *code);
+mp_obj_t mp_obj_new_fun_bc(mp_uint_t scope_flags, mp_uint_t n_pos_args, mp_uint_t n_kwonly_args, mp_obj_t def_args, mp_obj_t def_kw_args, const byte *code);
 mp_obj_t mp_obj_new_fun_native(mp_uint_t n_args, void *fun_data);
 mp_obj_t mp_obj_new_fun_viper(mp_uint_t n_args, void *fun_data, mp_uint_t type_sig);
 mp_obj_t mp_obj_new_fun_asm(mp_uint_t n_args, void *fun_data);
@@ -405,7 +429,7 @@ mp_obj_t mp_instance_cast_to_native_base(mp_const_obj_t self_in, mp_const_obj_t 
 
 void mp_obj_print_helper(void (*print)(void *env, const char *fmt, ...), void *env, mp_obj_t o_in, mp_print_kind_t kind);
 void mp_obj_print(mp_obj_t o, mp_print_kind_t kind);
-void mp_obj_print_exception(mp_obj_t exc);
+void mp_obj_print_exception(void (*print)(void *env, const char *fmt, ...), void *env, mp_obj_t exc);
 
 bool mp_obj_is_true(mp_obj_t arg);
 
@@ -447,18 +471,18 @@ void mp_obj_cell_set(mp_obj_t self_in, mp_obj_t obj);
 
 // int
 // For long int, returns value truncated to mp_int_t
-mp_int_t mp_obj_int_get(mp_const_obj_t self_in);
+mp_int_t mp_obj_int_get_truncated(mp_const_obj_t self_in);
+// Will raise exception if value doesn't fit into mp_int_t
+mp_int_t mp_obj_int_get_checked(mp_const_obj_t self_in);
 #if MICROPY_PY_BUILTINS_FLOAT
 mp_float_t mp_obj_int_as_float(mp_obj_t self_in);
 #endif
-// Will raise exception if value doesn't fit into mp_int_t
-mp_int_t mp_obj_int_get_checked(mp_const_obj_t self_in);
 
 // exception
 #define mp_obj_is_native_exception_instance(o) (mp_obj_get_type(o)->make_new == mp_obj_exception_make_new)
 bool mp_obj_is_exception_type(mp_obj_t self_in);
 bool mp_obj_is_exception_instance(mp_obj_t self_in);
-bool mp_obj_exception_match(mp_obj_t exc, const mp_obj_type_t *exc_type);
+bool mp_obj_exception_match(mp_obj_t exc, mp_const_obj_t exc_type);
 void mp_obj_exception_clear_traceback(mp_obj_t self_in);
 void mp_obj_exception_add_traceback(mp_obj_t self_in, qstr file, mp_uint_t line, qstr block);
 void mp_obj_exception_get_traceback(mp_obj_t self_in, mp_uint_t *n, mp_uint_t **values);
@@ -527,10 +551,6 @@ void mp_obj_set_store(mp_obj_t self_in, mp_obj_t item);
 // slice
 void mp_obj_slice_get(mp_obj_t self_in, mp_obj_t *start, mp_obj_t *stop, mp_obj_t *step);
 
-// array
-mp_uint_t mp_obj_array_len(mp_obj_t self_in);
-mp_obj_t mp_obj_new_bytearray_by_ref(mp_uint_t n, void *items);
-
 // functions
 #define MP_OBJ_FUN_ARGS_MAX (0xffff) // to set maximum value in n_args_max below
 typedef struct _mp_obj_fun_builtin_t { // use this to make const objects that go in ROM
@@ -555,6 +575,8 @@ typedef struct _mp_obj_module_t {
     mp_obj_dict_t *globals;
 } mp_obj_module_t;
 mp_obj_dict_t *mp_obj_module_get_globals(mp_obj_t self_in);
+// check if given module object is a package
+bool mp_obj_is_package(mp_obj_t module);
 
 // staticmethod and classmethod types; defined here so we can make const versions
 // this structure is used for instances of both staticmethod and classmethod

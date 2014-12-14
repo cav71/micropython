@@ -24,8 +24,8 @@
  * THE SOFTWARE.
  */
 
-mp_obj_t mp_builtin___import__(mp_uint_t n_args, mp_obj_t *args);
-mp_obj_t mp_builtin_open(mp_uint_t n_args, const mp_obj_t *args);
+mp_obj_t mp_builtin___import__(mp_uint_t n_args, const mp_obj_t *args);
+mp_obj_t mp_builtin_open(mp_uint_t n_args, const mp_obj_t *args, mp_map_t *kwargs);
 
 MP_DECLARE_CONST_FUN_OBJ(mp_builtin___build_class___obj);
 MP_DECLARE_CONST_FUN_OBJ(mp_builtin___import___obj);
@@ -35,6 +35,7 @@ MP_DECLARE_CONST_FUN_OBJ(mp_builtin_all_obj);
 MP_DECLARE_CONST_FUN_OBJ(mp_builtin_any_obj);
 MP_DECLARE_CONST_FUN_OBJ(mp_builtin_bin_obj);
 MP_DECLARE_CONST_FUN_OBJ(mp_builtin_callable_obj);
+MP_DECLARE_CONST_FUN_OBJ(mp_builtin_compile_obj);
 MP_DECLARE_CONST_FUN_OBJ(mp_builtin_chr_obj);
 MP_DECLARE_CONST_FUN_OBJ(mp_builtin_dir_obj);
 MP_DECLARE_CONST_FUN_OBJ(mp_builtin_divmod_obj);
@@ -60,6 +61,7 @@ MP_DECLARE_CONST_FUN_OBJ(mp_builtin_ord_obj);
 MP_DECLARE_CONST_FUN_OBJ(mp_builtin_pow_obj);
 MP_DECLARE_CONST_FUN_OBJ(mp_builtin_print_obj);
 MP_DECLARE_CONST_FUN_OBJ(mp_builtin_repr_obj);
+MP_DECLARE_CONST_FUN_OBJ(mp_builtin_round_obj);
 MP_DECLARE_CONST_FUN_OBJ(mp_builtin_sorted_obj);
 MP_DECLARE_CONST_FUN_OBJ(mp_builtin_sum_obj);
 
@@ -71,6 +73,7 @@ MP_DECLARE_CONST_FUN_OBJ(mp_op_setitem_obj);
 MP_DECLARE_CONST_FUN_OBJ(mp_op_delitem_obj);
 
 extern const mp_obj_module_t mp_module___main__;
+extern const mp_obj_module_t mp_module_builtins;
 extern const mp_obj_module_t mp_module_array;
 extern const mp_obj_module_t mp_module_collections;
 extern const mp_obj_module_t mp_module_io;
@@ -81,6 +84,9 @@ extern const mp_obj_module_t mp_module_struct;
 extern const mp_obj_module_t mp_module_sys;
 extern const mp_obj_module_t mp_module_gc;
 
+extern const mp_obj_dict_t mp_module_builtins_globals;
+extern mp_obj_dict_t *mp_module_builtins_override_dict;
+
 struct _dummy_t;
 extern struct _dummy_t mp_sys_stdin_obj;
 extern struct _dummy_t mp_sys_stdout_obj;
@@ -88,5 +94,9 @@ extern struct _dummy_t mp_sys_stderr_obj;
 
 // extmod modules
 extern const mp_obj_module_t mp_module_uctypes;
-extern const mp_obj_module_t mp_module_zlibd;
+extern const mp_obj_module_t mp_module_uzlib;
 extern const mp_obj_module_t mp_module_ujson;
+extern const mp_obj_module_t mp_module_ure;
+extern const mp_obj_module_t mp_module_uheapq;
+extern const mp_obj_module_t mp_module_uhashlib;
+extern const mp_obj_module_t mp_module_ubinascii;

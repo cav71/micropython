@@ -39,6 +39,7 @@ Q(__locals__)
 Q(__main__)
 Q(__module__)
 Q(__name__)
+Q(__hash__)
 Q(__next__)
 Q(__qualname__)
 Q(__path__)
@@ -77,6 +78,9 @@ Q(const)
 Q(native)
 Q(viper)
 Q(uint)
+Q(ptr)
+Q(ptr8)
+Q(ptr16)
 #endif
 
 #if MICROPY_EMIT_INLINE_THUMB
@@ -102,10 +106,10 @@ Q(FileExistsError)
 Q(FileNotFoundError)
 Q(FloatingPointError)
 Q(GeneratorExit)
-Q(IOError)
 Q(ImportError)
 Q(IndentationError)
 Q(IndexError)
+Q(KeyboardInterrupt)
 Q(KeyError)
 Q(LookupError)
 Q(MemoryError)
@@ -115,7 +119,6 @@ Q(OSError)
 Q(OverflowError)
 Q(RuntimeError)
 Q(SyntaxError)
-Q(SystemError)
 Q(SystemExit)
 Q(TypeError)
 Q(UnboundLocalError)
@@ -133,11 +136,18 @@ Q(abs)
 Q(all)
 Q(any)
 Q(args)
+#if MICROPY_PY_ARRAY
 Q(array)
+#endif
 Q(bin)
 Q({:#b})
 Q(bool)
+#if MICROPY_PY_BUILTINS_BYTEARRAY
 Q(bytearray)
+#endif
+#if MICROPY_PY_BUILTINS_MEMORYVIEW
+Q(memoryview)
+#endif
 Q(bytes)
 Q(callable)
 #if MICROPY_PY_STRUCT
@@ -192,6 +202,7 @@ Q(range)
 Q(read)
 Q(repr)
 Q(reversed)
+Q(round)
 Q(sorted)
 Q(staticmethod)
 Q(sum)
@@ -204,6 +215,12 @@ Q(type)
 Q(value)
 Q(write)
 Q(zip)
+
+#if MICROPY_PY_BUILTINS_COMPILE
+Q(compile)
+Q(code)
+Q(single)
+#endif
 
 Q(sep)
 Q(end)
@@ -346,6 +363,8 @@ Q(rect)
 Q(mem_total)
 Q(mem_current)
 Q(mem_peak)
+Q(mem_info)
+Q(qstr_info)
 #endif
 
 #if MICROPY_ENABLE_EMERGENCY_EXCEPTION_BUF && (MICROPY_EMERGENCY_EXCEPTION_BUF_SIZE == 0)
@@ -384,6 +403,7 @@ Q(version_info)
 #if MICROPY_PY_SYS_MAXSIZE
 Q(maxsize)
 #endif
+Q(print_exception)
 #endif
 
 #if MICROPY_PY_STRUCT
@@ -435,14 +455,19 @@ Q(BF_LEN)
 #if MICROPY_PY_IO
 Q(_io)
 Q(readall)
+Q(readinto)
 Q(readline)
 Q(readlines)
+Q(seek)
 Q(FileIO)
 Q(TextIOWrapper)
 Q(StringIO)
 Q(BytesIO)
 Q(getvalue)
 Q(file)
+Q(mode)
+Q(r)
+Q(encoding)
 #endif
 
 #if MICROPY_PY_GC
@@ -450,6 +475,7 @@ Q(gc)
 Q(collect)
 Q(disable)
 Q(enable)
+Q(isenabled)
 Q(mem_free)
 Q(mem_alloc)
 #endif
@@ -461,12 +487,42 @@ Q(setter)
 Q(deleter)
 #endif
 
-#if MICROPY_PY_ZLIBD
-Q(zlibd)
+#if MICROPY_PY_UZLIB
+Q(uzlib)
 Q(decompress)
 #endif
 
 #if MICROPY_PY_UJSON
 Q(ujson)
 Q(dumps)
+Q(loads)
+#endif
+
+#if MICROPY_PY_URE
+Q(ure)
+Q(compile)
+Q(match)
+Q(search)
+Q(group)
+Q(DEBUG)
+#endif
+
+#if MICROPY_PY_UHEAPQ
+Q(uheapq)
+Q(heappush)
+Q(heappop)
+Q(heapify)
+#endif
+
+#if MICROPY_PY_UHASHLIB
+Q(uhashlib)
+Q(update)
+Q(digest)
+Q(hexdigest)
+Q(sha256)
+#endif
+
+#if MICROPY_PY_UBINASCII
+Q(ubinascii)
+Q(hexlify)
 #endif

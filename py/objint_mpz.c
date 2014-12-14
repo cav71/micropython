@@ -45,7 +45,7 @@
 
 #if MICROPY_PY_SYS_MAXSIZE
 // Export value for sys.maxsize
-#define DIG_MASK ((1L << MPZ_DIG_SIZE) - 1)
+#define DIG_MASK ((MPZ_LONG_1 << MPZ_DIG_SIZE) - 1)
 STATIC const mpz_dig_t maxsize_dig[MPZ_NUM_DIG_FOR_INT] = {
     (MP_SSIZE_MAX >> MPZ_DIG_SIZE * 0) & DIG_MASK,
     #if (MP_SSIZE_MAX >> MPZ_DIG_SIZE * 0) > DIG_MASK
@@ -81,12 +81,12 @@ STATIC mp_obj_int_t *mp_obj_int_new_mpz(void) {
 // formatted size will be in *fmt_size.
 //
 // This particular routine should only be called for the mpz representation of the int.
-char *mp_obj_int_formatted_impl(char **buf, int *buf_size, int *fmt_size, mp_const_obj_t self_in,
+char *mp_obj_int_formatted_impl(char **buf, mp_uint_t *buf_size, mp_uint_t *fmt_size, mp_const_obj_t self_in,
                                 int base, const char *prefix, char base_char, char comma) {
     assert(MP_OBJ_IS_TYPE(self_in, &mp_type_int));
     const mp_obj_int_t *self = self_in;
 
-    uint needed_size = mpz_as_str_size(&self->mpz, base, prefix, comma);
+    mp_uint_t needed_size = mpz_as_str_size(&self->mpz, base, prefix, comma);
     if (needed_size > *buf_size) {
         *buf = m_new(char, needed_size);
         *buf_size = needed_size;
@@ -305,12 +305,12 @@ mp_obj_t mp_obj_new_int_from_str_len(const char **str, mp_uint_t len, bool neg, 
     return o;
 }
 
-mp_int_t mp_obj_int_get(mp_const_obj_t self_in) {
+mp_int_t mp_obj_int_get_truncated(mp_const_obj_t self_in) {
     if (MP_OBJ_IS_SMALL_INT(self_in)) {
         return MP_OBJ_SMALL_INT_VALUE(self_in);
     } else {
         const mp_obj_int_t *self = self_in;
-        // TODO this is a hack until we remove mp_obj_int_get function entirely
+        // hash returns actual int value if it fits in mp_int_t
         return mpz_hash(&self->mpz);
     }
 }

@@ -38,10 +38,10 @@ inline void do_str(const char *src) {
     qstr source_name = mp_lexer_source_name(lex);
     mp_lexer_free(lex);
     mp_obj_t module_fun = mp_compile(pn, source_name, MP_EMIT_OPT_NONE, true);
-    mp_parse_node_free(pn);
 
-    if (module_fun == mp_const_none) {
-        tt_abort_msg("Computer error");
+    if (mp_obj_is_exception_instance(module_fun)) {
+        mp_obj_print_exception(printf_wrapper, NULL, module_fun);
+        tt_abort_msg("Compile error");
     }
 
     nlr_buf_t nlr;
@@ -49,7 +49,7 @@ inline void do_str(const char *src) {
         mp_call_function_0(module_fun);
         nlr_pop();
     } else {
-        mp_obj_print_exception((mp_obj_t)nlr.ret_val);
+        mp_obj_print_exception(printf_wrapper, NULL, (mp_obj_t)nlr.ret_val);
         tt_abort_msg("Uncaught exception");
     }
 end:
@@ -78,10 +78,10 @@ mp_import_stat_t mp_import_stat(const char *path) {
     return MP_IMPORT_STAT_NO_EXIST;
 }
 
-mp_obj_t mp_builtin_open(uint n_args, const mp_obj_t *args) {
+mp_obj_t mp_builtin_open(uint n_args, const mp_obj_t *args, mp_map_t *kwargs) {
     return mp_const_none;
 }
-MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mp_builtin_open_obj, 1, 2, mp_builtin_open);
+MP_DEFINE_CONST_FUN_OBJ_KW(mp_builtin_open_obj, 1, mp_builtin_open);
 
 void nlr_jump_fail(void *val) {
 }

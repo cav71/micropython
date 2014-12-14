@@ -25,10 +25,23 @@
  */
 
 // This file contains default configuration settings for MicroPython.
-// You can override any of these options using mpconfigport.h file located
-// in a directory of your port.
+// You can override any of the options below using mpconfigport.h file
+// located in a directory of your port.
 
+// mpconfigport.h is a file containing configuration settings for a
+// particular port. mpconfigport.h is actually a default name for
+// such config, and it can be overriden using MP_CONFIGFILE preprocessor
+// define (you can do that by passing CFLAGS_EXTRA='-DMP_CONFIGFILE="<file.h>"'
+// argument to make when using standard MicroPython makefiles).
+// This is useful to have more than one config per port, for example,
+// release vs debug configs, etc. Note that if you switch from one config
+// to another, you must rebuild from scratch using "-B" switch to make.
+
+#ifdef MP_CONFIGFILE
+#include MP_CONFIGFILE
+#else
 #include <mpconfigport.h>
+#endif
 
 // Any options not explicitly set in mpconfigport.h will get default
 // values below.
@@ -85,6 +98,11 @@
 // So we can allocate a buffer on the stack for path manipulation in import
 #ifndef MICROPY_ALLOC_PATH_MAX
 #define MICROPY_ALLOC_PATH_MAX (512)
+#endif
+
+// Initial size of module dict
+#ifndef MICROPY_MODULE_DICT_SIZE
+#define MICROPY_MODULE_DICT_SIZE (1)
 #endif
 
 /*****************************************************************************/
@@ -166,8 +184,8 @@
 #endif
 
 // Whether to enable finalisers in the garbage collector (ie call __del__)
-#ifndef MICROPY_ENABLE_GC_FINALISER
-#define MICROPY_ENABLE_GC_FINALISER (0)
+#ifndef MICROPY_ENABLE_FINALISER
+#define MICROPY_ENABLE_FINALISER (0)
 #endif
 
 // Whether to check C stack usage. C stack used for calling Python functions,
@@ -220,7 +238,7 @@ typedef long long mp_longint_impl_t;
 #define MICROPY_ENABLE_DOC_STRING (0)
 #endif
 
-// Exception messages are short static strings (TODO)
+// Exception messages are short static strings
 #define MICROPY_ERROR_REPORTING_TERSE    (1)
 // Exception messages provide basic error details
 #define MICROPY_ERROR_REPORTING_NORMAL   (2)
@@ -269,6 +287,16 @@ typedef double mp_float_t;
 #define MICROPY_STREAMS_NON_BLOCK (0)
 #endif
 
+// Whether module weak links are supported
+#ifndef MICROPY_MODULE_WEAK_LINKS
+#define MICROPY_MODULE_WEAK_LINKS (0)
+#endif
+
+// Whether you can override builtins in the builtins module
+#ifndef MICROPY_CAN_OVERRIDE_BUILTINS
+#define MICROPY_CAN_OVERRIDE_BUILTINS (0)
+#endif
+
 /*****************************************************************************/
 /* Fine control over Python builtins, classes, modules, etc                  */
 
@@ -280,6 +308,11 @@ typedef double mp_float_t;
 // Whether to support bytearray object
 #ifndef MICROPY_PY_BUILTINS_BYTEARRAY
 #define MICROPY_PY_BUILTINS_BYTEARRAY (1)
+#endif
+
+// Whether to support memoryview object
+#ifndef MICROPY_PY_BUILTINS_MEMORYVIEW
+#define MICROPY_PY_BUILTINS_MEMORYVIEW (0)
 #endif
 
 // Whether to support set object
@@ -300,6 +333,11 @@ typedef double mp_float_t;
 // Whether to support property object
 #ifndef MICROPY_PY_BUILTINS_PROPERTY
 #define MICROPY_PY_BUILTINS_PROPERTY (1)
+#endif
+
+// Whether to support compile function
+#ifndef MICROPY_PY_BUILTINS_COMPILE
+#define MICROPY_PY_BUILTINS_COMPILE (0)
 #endif
 
 // Whether to set __file__ for imported modules
@@ -386,12 +424,28 @@ typedef double mp_float_t;
 #define MICROPY_PY_UCTYPES (0)
 #endif
 
-#ifndef MICROPY_PY_ZLIBD
-#define MICROPY_PY_ZLIBD (0)
+#ifndef MICROPY_PY_UZLIB
+#define MICROPY_PY_UZLIB (0)
 #endif
 
 #ifndef MICROPY_PY_UJSON
 #define MICROPY_PY_UJSON (0)
+#endif
+
+#ifndef MICROPY_PY_URE
+#define MICROPY_PY_URE (0)
+#endif
+
+#ifndef MICROPY_PY_UHEAPQ
+#define MICROPY_PY_UHEAPQ (0)
+#endif
+
+#ifndef MICROPY_PY_UHASHLIB
+#define MICROPY_PY_UHASHLIB (0)
+#endif
+
+#ifndef MICROPY_PY_UBINASCII
+#define MICROPY_PY_UBINASCII (0)
 #endif
 
 /*****************************************************************************/
@@ -407,6 +461,11 @@ typedef double mp_float_t;
 #define MICROPY_PORT_BUILTIN_MODULES
 #endif
 
+// Any module weak links - see builtintables.c:mp_builtin_module_weak_links_table.
+#ifndef MICROPY_PORT_BUILTIN_MODULE_WEAK_LINKS
+#define MICROPY_PORT_BUILTIN_MODULE_WEAK_LINKS
+#endif
+
 // Additional constant definitions for the compiler - see compile.c:mp_constants_table.
 #ifndef MICROPY_PORT_CONSTANTS
 #define MICROPY_PORT_CONSTANTS
@@ -417,10 +476,10 @@ typedef double mp_float_t;
 
 // On embedded platforms, these will typically enable/disable irqs.
 #ifndef MICROPY_BEGIN_ATOMIC_SECTION
-#define MICROPY_BEGIN_ATOMIC_SECTION()
+#define MICROPY_BEGIN_ATOMIC_SECTION() (0)
 #endif
 #ifndef MICROPY_END_ATOMIC_SECTION
-#define MICROPY_END_ATOMIC_SECTION()
+#define MICROPY_END_ATOMIC_SECTION(state) (void)(state)
 #endif
 
 // Allow to override static modifier for global objects, e.g. to use with
@@ -434,13 +493,28 @@ typedef double mp_float_t;
 // mp_int_t value with most significant bit set
 #define WORD_MSBIT_HIGH (((mp_uint_t)1) << (BYTES_PER_WORD * 8 - 1))
 
-#if !defined(MP_ENDIANNESS_LITTLE) && !defined(MP_ENDIANNESS_BIG)
-// Just because most archs are such?
-#define MP_ENDIANNESS_LITTLE (1)
-#endif
-// Ensure we don't accidentally set both endiannesses
-#if MP_ENDIANNESS_BIG
-#define MP_ENDIANNESS_LITTLE (0)
+// Make sure both MP_ENDIANNESS_LITTLE and MP_ENDIANNESS_BIG are
+// defined and that they are the opposite of each other.
+#if defined(MP_ENDIANNESS_LITTLE)
+#define MP_ENDIANNESS_BIG (!MP_ENDIANNESS_LITTLE)
+#elif defined(MP_ENDIANNESS_BIG)
+#define MP_ENDIANNESS_LITTLE (!MP_ENDIANNESS_BIG)
+#else
+  // Endiannes not defined by port so try to autodetect it.
+  #if defined(__BYTE_ORDER__)
+    #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+      #define MP_ENDIANNESS_LITTLE (1)
+    #else
+      #define MP_ENDIANNESS_LITTLE (0)
+    #endif
+  #elif defined(__LITTLE_ENDIAN__) || defined(__LITTLE_ENDIAN) || defined (_LITTLE_ENDIAN)
+    #define MP_ENDIANNESS_LITTLE (1)
+  #elif defined(__BIG_ENDIAN__) || defined(__BIG_ENDIAN) || defined (_BIG_ENDIAN)
+    #define MP_ENDIANNESS_LITTLE (0)
+  #else
+    #error endianness not defined and cannot detect it
+  #endif
+  #define MP_ENDIANNESS_BIG (!MP_ENDIANNESS_LITTLE)
 #endif
 
 // Make a pointer to RAM callable (eg set lower bit for Thumb code)

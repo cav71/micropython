@@ -62,6 +62,9 @@ STATIC mp_obj_t gen_wrap_call(mp_obj_t self_in, mp_uint_t n_args, mp_uint_t n_kw
     mp_uint_t code_info_size = mp_decode_uint(&code_info);
     const byte *ip = self_fun->bytecode + code_info_size;
 
+    // bytecode prelude: skip arg names
+    ip += (self_fun->n_pos_args + self_fun->n_kwonly_args) * sizeof(mp_obj_t);
+
     // bytecode prelude: get state size and exception stack size
     mp_uint_t n_state = mp_decode_uint(&ip);
     mp_uint_t n_exc_stack = mp_decode_uint(&ip);
@@ -94,7 +97,7 @@ mp_obj_t mp_obj_new_gen_wrap(mp_obj_t fun) {
 /******************************************************************************/
 /* generator instance                                                         */
 
-void gen_instance_print(void (*print)(void *env, const char *fmt, ...), void *env, mp_obj_t self_in, mp_print_kind_t kind) {
+STATIC void gen_instance_print(void (*print)(void *env, const char *fmt, ...), void *env, mp_obj_t self_in, mp_print_kind_t kind) {
     mp_obj_gen_instance_t *self = self_in;
     print(env, "<generator object '%s' at %p>", mp_obj_code_get_name(self->code_state.code_info), self_in);
 }
@@ -180,7 +183,7 @@ STATIC mp_obj_t gen_resume_and_raise(mp_obj_t self_in, mp_obj_t send_value, mp_o
     }
 }
 
-mp_obj_t gen_instance_iternext(mp_obj_t self_in) {
+STATIC mp_obj_t gen_instance_iternext(mp_obj_t self_in) {
     return gen_resume_and_raise(self_in, mp_const_none, MP_OBJ_NULL);
 }
 

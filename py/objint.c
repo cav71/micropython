@@ -88,8 +88,8 @@ void mp_obj_int_print(void (*print)(void *env, const char *fmt, ...), void *env,
     // enough, a dynamic one will be allocated.
     char stack_buf[sizeof(mp_int_t) * 4];
     char *buf = stack_buf;
-    int buf_size = sizeof(stack_buf);
-    int fmt_size;
+    mp_uint_t buf_size = sizeof(stack_buf);
+    mp_uint_t fmt_size;
 
     char *str = mp_obj_int_formatted(&buf, &buf_size, &fmt_size, self_in, 10, NULL, '\0', '\0');
     print(env, "%s", str);
@@ -135,7 +135,7 @@ STATIC uint int_as_str_size_formatted(uint base, const char *prefix, char comma)
 //
 // The resulting formatted string will be returned from this function and the
 // formatted size will be in *fmt_size.
-char *mp_obj_int_formatted(char **buf, int *buf_size, int *fmt_size, mp_const_obj_t self_in,
+char *mp_obj_int_formatted(char **buf, mp_uint_t *buf_size, mp_uint_t *fmt_size, mp_const_obj_t self_in,
                            int base, const char *prefix, char base_char, char comma) {
     fmt_int_t num;
     if (MP_OBJ_IS_SMALL_INT(self_in)) {
@@ -270,7 +270,7 @@ mp_obj_t mp_obj_new_int(mp_int_t value) {
     return mp_const_none;
 }
 
-mp_int_t mp_obj_int_get(mp_const_obj_t self_in) {
+mp_int_t mp_obj_int_get_truncated(mp_const_obj_t self_in) {
     return MP_OBJ_SMALL_INT_VALUE(self_in);
 }
 
@@ -327,20 +327,28 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(int_from_bytes_fun_obj, 2, 3, int_fro
 STATIC MP_DEFINE_CONST_CLASSMETHOD_OBJ(int_from_bytes_obj, (const mp_obj_t)&int_from_bytes_fun_obj);
 
 STATIC mp_obj_t int_to_bytes(mp_uint_t n_args, const mp_obj_t *args) {
-    mp_int_t val = mp_obj_int_get_checked(args[0]);
-
-    uint len = MP_OBJ_SMALL_INT_VALUE(args[1]);
-    byte *data;
-
     // TODO: Support long ints
-    // TODO: Support byteorder param
-    // TODO: Support signed param
+    // TODO: Support byteorder param (assumes 'little')
+    // TODO: Support signed param (assumes signed=False)
+
+    mp_int_t val = mp_obj_int_get_checked(args[0]);
+    mp_int_t len = MP_OBJ_SMALL_INT_VALUE(args[1]);
+
+    byte *data;
     mp_obj_t o = mp_obj_str_builder_start(&mp_type_bytes, len, &data);
     memset(data, 0, len);
-    memcpy(data, &val, len < sizeof(mp_int_t) ? len : sizeof(mp_int_t));
+
+    if (MP_ENDIANNESS_LITTLE) {
+        memcpy(data, &val, len < sizeof(mp_int_t) ? len : sizeof(mp_int_t));
+    } else {
+        while (len--) {
+            *data++ = val;
+            val >>= 8;
+        }
+    }
+
     return mp_obj_str_builder_end(o);
 }
-
 STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(int_to_bytes_obj, 2, 4, int_to_bytes);
 
 STATIC const mp_map_elem_t int_locals_dict_table[] = {

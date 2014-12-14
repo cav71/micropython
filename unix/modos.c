@@ -65,21 +65,25 @@ STATIC mp_obj_t mod_os_stat(mp_obj_t path_in) {
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_1(mod_os_stat_obj, mod_os_stat);
 
+STATIC mp_obj_t mod_os_unlink(mp_obj_t path_in) {
+    mp_uint_t len;
+    const char *path = mp_obj_str_get_data(path_in, &len);
+
+    int r = unlink(path);
+
+    RAISE_ERRNO(r, errno);
+
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(mod_os_unlink_obj, mod_os_unlink);
+
 STATIC const mp_map_elem_t mp_module_os_globals_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR___name__), MP_OBJ_NEW_QSTR(MP_QSTR__os) },
     { MP_OBJ_NEW_QSTR(MP_QSTR_stat), (mp_obj_t)&mod_os_stat_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_unlink),(mp_obj_t)&mod_os_unlink_obj},
 };
 
-STATIC const mp_obj_dict_t mp_module_os_globals = {
-    .base = {&mp_type_dict},
-    .map = {
-        .all_keys_are_qstrs = 1,
-        .table_is_fixed_array = 1,
-        .used = MP_ARRAY_SIZE(mp_module_os_globals_table),
-        .alloc = MP_ARRAY_SIZE(mp_module_os_globals_table),
-        .table = (mp_map_elem_t*)mp_module_os_globals_table,
-    },
-};
+STATIC MP_DEFINE_CONST_DICT(mp_module_os_globals, mp_module_os_globals_table);
 
 const mp_obj_module_t mp_module_os = {
     .base = { &mp_type_module },

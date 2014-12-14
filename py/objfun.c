@@ -44,6 +44,7 @@
 #if 0 // print debugging info
 #define DEBUG_PRINT (1)
 #else // don't print debugging info
+#define DEBUG_PRINT (0)
 #define DEBUG_printf(...) (void)0
 #endif
 
@@ -116,29 +117,6 @@ const mp_obj_type_t mp_type_fun_builtin = {
     .binary_op = mp_obj_fun_binary_op,
 };
 
-#if 0 // currently unused, and semi-obsolete
-mp_obj_t mp_make_function_var(int n_args_min, mp_fun_var_t fun) {
-    mp_obj_fun_builtin_t *o = m_new_obj(mp_obj_fun_builtin_t);
-    o->base.type = &mp_type_fun_native;
-    o->is_kw = false;
-    o->n_args_min = n_args_min;
-    o->n_args_max = MP_OBJ_FUN_ARGS_MAX;
-    o->fun = fun;
-    return o;
-}
-
-// min and max are inclusive
-mp_obj_t mp_make_function_var_between(int n_args_min, int n_args_max, mp_fun_var_t fun) {
-    mp_obj_fun_builtin_t *o = m_new_obj(mp_obj_fun_builtin_t);
-    o->base.type = &mp_type_fun_native;
-    o->is_kw = false;
-    o->n_args_min = n_args_min;
-    o->n_args_max = n_args_max;
-    o->fun = fun;
-    return o;
-}
-#endif
-
 /******************************************************************************/
 /* byte code functions                                                        */
 
@@ -161,9 +139,9 @@ STATIC void fun_bc_print(void (*print)(void *env, const char *fmt, ...), void *e
 #endif
 
 #if DEBUG_PRINT
-STATIC void dump_args(const mp_obj_t *a, int sz) {
+STATIC void dump_args(const mp_obj_t *a, mp_uint_t sz) {
     DEBUG_printf("%p: ", a);
-    for (int i = 0; i < sz; i++) {
+    for (mp_uint_t i = 0; i < sz; i++) {
         DEBUG_printf("%p ", a[i]);
     }
     DEBUG_printf("\n");
@@ -183,7 +161,7 @@ STATIC void dump_args(const mp_obj_t *a, int sz) {
 STATIC mp_obj_t fun_bc_call(mp_obj_t self_in, mp_uint_t n_args, mp_uint_t n_kw, const mp_obj_t *args) {
     MP_STACK_CHECK();
 
-    DEBUG_printf("Input n_args: %d, n_kw: %d\n", n_args, n_kw);
+    DEBUG_printf("Input n_args: " UINT_FMT ", n_kw: " UINT_FMT "\n", n_args, n_kw);
     DEBUG_printf("Input pos args: ");
     dump_args(args, n_args);
     DEBUG_printf("Input kw args: ");
@@ -196,7 +174,10 @@ STATIC mp_obj_t fun_bc_call(mp_obj_t self_in, mp_uint_t n_args, mp_uint_t n_kw, 
     mp_uint_t code_info_size = mp_decode_uint(&code_info);
     const byte *ip = self->bytecode + code_info_size;
 
-    // bytecode prelude: state size and exception stack size; 16 bit uints
+    // bytecode prelude: skip arg names
+    ip += (self->n_pos_args + self->n_kwonly_args) * sizeof(mp_obj_t);
+
+    // bytecode prelude: state size and exception stack size
     mp_uint_t n_state = mp_decode_uint(&ip);
     mp_uint_t n_exc_stack = mp_decode_uint(&ip);
 
@@ -291,7 +272,7 @@ const mp_obj_type_t mp_type_fun_bc = {
     .binary_op = mp_obj_fun_binary_op,
 };
 
-mp_obj_t mp_obj_new_fun_bc(mp_uint_t scope_flags, qstr *args, mp_uint_t n_pos_args, mp_uint_t n_kwonly_args, mp_obj_t def_args_in, mp_obj_t def_kw_args, const byte *code) {
+mp_obj_t mp_obj_new_fun_bc(mp_uint_t scope_flags, mp_uint_t n_pos_args, mp_uint_t n_kwonly_args, mp_obj_t def_args_in, mp_obj_t def_kw_args, const byte *code) {
     mp_uint_t n_def_args = 0;
     mp_uint_t n_extra_args = 0;
     mp_obj_tuple_t *def_args = def_args_in;
@@ -306,7 +287,6 @@ mp_obj_t mp_obj_new_fun_bc(mp_uint_t scope_flags, qstr *args, mp_uint_t n_pos_ar
     mp_obj_fun_bc_t *o = m_new_obj_var(mp_obj_fun_bc_t, mp_obj_t, n_extra_args);
     o->base.type = &mp_type_fun_bc;
     o->globals = mp_globals_get();
-    o->args = args;
     o->n_pos_args = n_pos_args;
     o->n_kwonly_args = n_kwonly_args;
     o->n_def_args = n_def_args;
@@ -472,7 +452,7 @@ STATIC mp_uint_t convert_obj_for_inline_asm(mp_obj_t obj) {
         return 1;
     } else if (MP_OBJ_IS_STR(obj)) {
         // pointer to the string (it's probably constant though!)
-        uint l;
+        mp_uint_t l;
         return (mp_uint_t)mp_obj_str_get_data(obj, &l);
     } else {
         mp_obj_type_t *type = mp_obj_get_type(obj);
@@ -484,13 +464,13 @@ STATIC mp_uint_t convert_obj_for_inline_asm(mp_obj_t obj) {
 #endif
         } else if (type == &mp_type_tuple) {
             // pointer to start of tuple (could pass length, but then could use len(x) for that)
-            uint len;
+            mp_uint_t len;
             mp_obj_t *items;
             mp_obj_tuple_get(obj, &len, &items);
             return (mp_uint_t)items;
         } else if (type == &mp_type_list) {
             // pointer to start of list (could pass length, but then could use len(x) for that)
-            uint len;
+            mp_uint_t len;
             mp_obj_t *items;
             mp_obj_list_get(obj, &len, &items);
             return (mp_uint_t)items;

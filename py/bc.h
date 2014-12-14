@@ -42,7 +42,7 @@ typedef struct _mp_code_state {
     mp_obj_t *sp;
     // bit 0 is saved currently_in_except_block value
     mp_exc_stack_t *exc_sp;
-    uint n_state;
+    mp_uint_t n_state;
     // Variable-length
     mp_obj_t state[0];
     // Variable-length, never accessed by name, only as (void*)(state + n_state)
@@ -53,8 +53,8 @@ mp_uint_t mp_decode_uint(const byte **ptr);
 
 mp_vm_return_kind_t mp_execute_bytecode(mp_code_state *code_state, volatile mp_obj_t inject_exc);
 void mp_setup_code_state(mp_code_state *code_state, mp_obj_t self_in, mp_uint_t n_args, mp_uint_t n_kw, const mp_obj_t *args);
-void mp_bytecode_print(const void *descr, const byte *code, int len);
-void mp_bytecode_print2(const byte *code, int len);
+void mp_bytecode_print(const void *descr, mp_uint_t n_total_args, const byte *code, mp_uint_t len);
+void mp_bytecode_print2(const byte *code, mp_uint_t len);
 
 // Helper macros to access pointer with least significant bit holding a flag
 #define MP_TAGPTR_PTR(x) ((void*)((mp_uint_t)(x) & ~((mp_uint_t)1)))

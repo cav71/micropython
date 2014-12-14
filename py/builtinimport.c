@@ -49,10 +49,25 @@
 #define DEBUG_PRINT (1)
 #define DEBUG_printf DEBUG_printf
 #else // don't print debugging info
+#define DEBUG_PRINT (0)
 #define DEBUG_printf(...) (void)0
 #endif
 
 #define PATH_SEP_CHAR '/'
+
+#if MICROPY_MODULE_WEAK_LINKS
+STATIC const mp_map_elem_t mp_builtin_module_weak_links_table[] = {
+    MICROPY_PORT_BUILTIN_MODULE_WEAK_LINKS
+};
+
+STATIC MP_DEFINE_CONST_MAP(mp_builtin_module_weak_links_map, mp_builtin_module_weak_links_table);
+#endif
+
+bool mp_obj_is_package(mp_obj_t module) {
+    mp_obj_t dest[2];
+    mp_load_method_maybe(module, MP_QSTR___path__, dest);
+    return dest[0] != MP_OBJ_NULL;
+}
 
 STATIC mp_import_stat_t stat_dir_or_file(vstr_t *path) {
     //printf("stat %s\n", vstr_str(path));
@@ -69,20 +84,21 @@ STATIC mp_import_stat_t stat_dir_or_file(vstr_t *path) {
 }
 
 STATIC mp_import_stat_t find_file(const char *file_str, uint file_len, vstr_t *dest) {
-    // extract the list of paths
-    mp_uint_t path_num = 0;
-    mp_obj_t *path_items;
 #if MICROPY_PY_SYS
+    // extract the list of paths
+    mp_uint_t path_num;
+    mp_obj_t *path_items;
     mp_obj_list_get(mp_sys_path, &path_num, &path_items);
-#endif
 
     if (path_num == 0) {
+#endif
         // mp_sys_path is empty, so just use the given file name
         vstr_add_strn(dest, file_str, file_len);
         return stat_dir_or_file(dest);
+#if MICROPY_PY_SYS
     } else {
         // go through each path looking for a directory or file
-        for (int i = 0; i < path_num; i++) {
+        for (mp_uint_t i = 0; i < path_num; i++) {
             vstr_reset(dest);
             mp_uint_t p_len;
             const char *p = mp_obj_str_get_data(path_items[i], &p_len);
@@ -100,6 +116,7 @@ STATIC mp_import_stat_t find_file(const char *file_str, uint file_len, vstr_t *d
         // could not find a directory or file
         return MP_IMPORT_STAT_NO_EXIST;
     }
+#endif
 }
 
 STATIC void do_load(mp_obj_t module_obj, vstr_t *file) {
@@ -108,76 +125,37 @@ STATIC void do_load(mp_obj_t module_obj, vstr_t *file) {
 
     if (lex == NULL) {
         // we verified the file exists using stat, but lexer could still fail
-        nlr_raise(mp_obj_new_exception_msg_varg(&mp_type_ImportError, "No module named '%s'", vstr_str(file)));
+        if (MICROPY_ERROR_REPORTING == MICROPY_ERROR_REPORTING_TERSE) {
+            nlr_raise(mp_obj_new_exception_msg(&mp_type_ImportError, "module not found"));
+        } else {
+            nlr_raise(mp_obj_new_exception_msg_varg(&mp_type_ImportError,
+                "no module named '%s'", vstr_str(file)));
+        }
     }
 
-    qstr source_name = mp_lexer_source_name(lex);
-
-    // save the old context
-    mp_obj_dict_t *old_locals = mp_locals_get();
-    mp_obj_dict_t *old_globals = mp_globals_get();
-
-    // set the new context
-    mp_locals_set(mp_obj_module_get_globals(module_obj));
-    mp_globals_set(mp_obj_module_get_globals(module_obj));
     #if MICROPY_PY___FILE__
-    mp_store_attr(module_obj, MP_QSTR___file__, mp_obj_new_str(vstr_str(file), vstr_len(file), false));
+    qstr source_name = lex->source_name;
+    mp_store_attr(module_obj, MP_QSTR___file__, MP_OBJ_NEW_QSTR(source_name));
     #endif
 
-    // parse the imported script
-    mp_parse_error_kind_t parse_error_kind;
-    mp_parse_node_t pn = mp_parse(lex, MP_PARSE_FILE_INPUT, &parse_error_kind);
-
-    if (pn == MP_PARSE_NODE_NULL) {
-        // parse error; clean up and raise exception
-        mp_obj_t exc = mp_parse_make_exception(lex, parse_error_kind);
-        mp_lexer_free(lex);
-        mp_locals_set(old_locals);
-        mp_globals_set(old_globals);
-        nlr_raise(exc);
-    }
-
-    mp_lexer_free(lex);
-
-    // compile the imported script
-    mp_obj_t module_fun = mp_compile(pn, source_name, MP_EMIT_OPT_NONE, false);
-    mp_parse_node_free(pn);
-
-    if (module_fun == mp_const_none) {
-        // TODO handle compile error correctly
-        mp_locals_set(old_locals);
-        mp_globals_set(old_globals);
-        nlr_raise(mp_obj_new_exception_msg(&mp_type_SyntaxError, "Syntax error in imported module"));
-    }
-
-    // complied successfully, execute it
-    nlr_buf_t nlr;
-    if (nlr_push(&nlr) == 0) {
-        mp_call_function_0(module_fun);
-        nlr_pop();
-    } else {
-        // exception; restore context and re-raise same exception
-        mp_locals_set(old_locals);
-        mp_globals_set(old_globals);
-        nlr_raise(nlr.ret_val);
-    }
-    mp_locals_set(old_locals);
-    mp_globals_set(old_globals);
+    // parse, compile and execute the module in its context
+    mp_obj_dict_t *mod_globals = mp_obj_module_get_globals(module_obj);
+    mp_parse_compile_execute(lex, MP_PARSE_FILE_INPUT, mod_globals, mod_globals);
 }
 
-mp_obj_t mp_builtin___import__(mp_uint_t n_args, mp_obj_t *args) {
+mp_obj_t mp_builtin___import__(mp_uint_t n_args, const mp_obj_t *args) {
 #if DEBUG_PRINT
-    printf("__import__:\n");
-    for (int i = 0; i < n_args; i++) {
-        printf("  ");
+    DEBUG_printf("__import__:\n");
+    for (mp_uint_t i = 0; i < n_args; i++) {
+        DEBUG_printf("  ");
         mp_obj_print(args[i], PRINT_REPR);
-        printf("\n");
+        DEBUG_printf("\n");
     }
 #endif
 
     mp_obj_t module_name = args[0];
     mp_obj_t fromtuple = mp_const_none;
-    int level = 0;
+    mp_int_t level = 0;
     if (n_args >= 4) {
         fromtuple = args[3];
         if (n_args >= 5) {
@@ -199,9 +177,9 @@ mp_obj_t mp_builtin___import__(mp_uint_t n_args, mp_obj_t *args) {
         mp_obj_t this_name_q = mp_obj_dict_get(mp_globals_get(), MP_OBJ_NEW_QSTR(MP_QSTR___name__));
         assert(this_name_q != MP_OBJ_NULL);
 #if DEBUG_PRINT
-        printf("Current module: ");
+        DEBUG_printf("Current module: ");
         mp_obj_print(this_name_q, PRINT_REPR);
-        printf("\n");
+        DEBUG_printf("\n");
 #endif
 
         mp_uint_t this_name_l;
@@ -295,16 +273,46 @@ mp_obj_t mp_builtin___import__(mp_uint_t n_args, mp_obj_t *args) {
             }
             DEBUG_printf("Current path: %s\n", vstr_str(&path));
 
-            // fail if we couldn't find the file
             if (stat == MP_IMPORT_STAT_NO_EXIST) {
-                nlr_raise(mp_obj_new_exception_msg_varg(&mp_type_ImportError, "No module named '%s'", qstr_str(mod_name)));
+                #if MICROPY_MODULE_WEAK_LINKS
+                // check if there is a weak link to this module
+                if (i == mod_len) {
+                    mp_map_elem_t *el = mp_map_lookup((mp_map_t*)&mp_builtin_module_weak_links_map, MP_OBJ_NEW_QSTR(mod_name), MP_MAP_LOOKUP);
+                    if (el == NULL) {
+                        goto no_exist;
+                    }
+                    // found weak linked module
+                    module_obj = el->value;
+                } else {
+                    no_exist:
+                #else
+                {
+                #endif
+                    // couldn't find the file, so fail
+                    if (MICROPY_ERROR_REPORTING == MICROPY_ERROR_REPORTING_TERSE) {
+                        nlr_raise(mp_obj_new_exception_msg(&mp_type_ImportError, "module not found"));
+                    } else {
+                        nlr_raise(mp_obj_new_exception_msg_varg(&mp_type_ImportError,
+                            "no module named '%s'", qstr_str(mod_name)));
+                    }
+                }
+            } else {
+                // found the file, so get the module
+                module_obj = mp_module_get(mod_name);
             }
 
-            module_obj = mp_module_get(mod_name);
             if (module_obj == MP_OBJ_NULL) {
                 // module not already loaded, so load it!
 
                 module_obj = mp_obj_new_module(mod_name);
+
+                // if args[3] (fromtuple) has magic value False, set up
+                // this module for command-line "-m" option (set module's
+                // name to __main__ instead of real name).
+                if (i == mod_len && fromtuple == mp_const_false) {
+                    mp_obj_module_t *o = module_obj;
+                    mp_obj_dict_store(o->globals, MP_OBJ_NEW_QSTR(MP_QSTR___name__), MP_OBJ_NEW_QSTR(MP_QSTR___main__));
+                }
 
                 if (stat == MP_IMPORT_STAT_DIR) {
                     DEBUG_printf("%s is dir\n", vstr_str(&path));

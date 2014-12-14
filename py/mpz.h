@@ -36,7 +36,7 @@
 // depending on the machine, but it (and MPZ_DIG_SIZE) can be freely changed so
 // long as the constraints mentioned above are met.
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(_WIN64)
 // 64-bit machine, using 32-bit storage for digits
 typedef uint32_t mpz_dig_t;
 typedef uint64_t mpz_dbl_dig_t;
@@ -48,6 +48,12 @@ typedef uint16_t mpz_dig_t;
 typedef uint32_t mpz_dbl_dig_t;
 typedef int32_t mpz_dbl_dig_signed_t;
 #define MPZ_DIG_SIZE (16)
+#endif
+
+#ifdef _WIN64
+  #define MPZ_LONG_1 1i64
+#else
+  #define MPZ_LONG_1 1L
 #endif
 
 #define MPZ_NUM_DIG_FOR_INT (sizeof(mp_int_t) * 8 / MPZ_DIG_SIZE + 1)
@@ -69,7 +75,7 @@ void mpz_init_from_int(mpz_t *z, mp_int_t val);
 void mpz_init_fixed_from_int(mpz_t *z, mpz_dig_t *dig, mp_uint_t dig_alloc, mp_int_t val);
 void mpz_deinit(mpz_t *z);
 
-mpz_t *mpz_zero();
+mpz_t *mpz_zero(void);
 mpz_t *mpz_from_int(mp_int_t i);
 mpz_t *mpz_from_ll(long long i, bool is_signed);
 mpz_t *mpz_from_str(const char *str, mp_uint_t len, bool neg, mp_uint_t base);
@@ -88,7 +94,7 @@ bool mpz_is_neg(const mpz_t *z);
 bool mpz_is_odd(const mpz_t *z);
 bool mpz_is_even(const mpz_t *z);
 
-mp_int_t mpz_cmp(const mpz_t *lhs, const mpz_t *rhs);
+int mpz_cmp(const mpz_t *lhs, const mpz_t *rhs);
 
 mpz_t *mpz_abs(const mpz_t *z);
 mpz_t *mpz_neg(const mpz_t *z);

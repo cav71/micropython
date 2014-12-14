@@ -47,16 +47,18 @@
 #include "compile.h"
 #include "runtime0.h"
 #include "runtime.h"
+#include "builtin.h"
 #include "repl.h"
 #include "gc.h"
 #include "genhdr/py-version.h"
 #include "input.h"
 #include "stackctrl.h"
+#include "pfenv.h"
 
 // Command line options, with their defaults
-bool compile_only = false;
-uint emit_opt = MP_EMIT_OPT_NONE;
-uint mp_verbose_flag;
+STATIC bool compile_only = false;
+STATIC uint emit_opt = MP_EMIT_OPT_NONE;
+mp_uint_t mp_verbose_flag = 0;
 
 #if MICROPY_ENABLE_GC
 // Heap size of GC heap (if enabled)
@@ -64,11 +66,48 @@ uint mp_verbose_flag;
 long heap_size = 128*1024 * (sizeof(mp_uint_t) / 4);
 #endif
 
-void microsocket_init();
-void time_init();
-void ffi_init();
+#ifndef _WIN32
+#include <signal.h>
 
-// returns standard error codes: 0 for success, 1 for all other errors
+STATIC mp_obj_t keyboard_interrupt_obj;
+
+STATIC void sighandler(int signum) {
+    if (signum == SIGINT) {
+        mp_obj_exception_clear_traceback(keyboard_interrupt_obj);
+        mp_pending_exception = keyboard_interrupt_obj;
+        // disable our handler so next we really die
+        struct sigaction sa;
+        sa.sa_handler = SIG_DFL;
+        sigemptyset(&sa.sa_mask);
+        sigaction(SIGINT, &sa, NULL);
+    }
+}
+#endif
+
+#define FORCED_EXIT (0x100)
+// If exc is SystemExit, return value where FORCED_EXIT bit set,
+// and lower 8 bits are SystemExit value. For all other exceptions,
+// return 1.
+STATIC int handle_uncaught_exception(mp_obj_t exc) {
+    // check for SystemExit
+    if (mp_obj_is_subclass_fast(mp_obj_get_type(exc), &mp_type_SystemExit)) {
+        // None is an exit value of 0; an int is its value; anything else is 1
+        mp_obj_t exit_val = mp_obj_exception_get_value(exc);
+        mp_int_t val = 0;
+        if (exit_val != mp_const_none && !mp_obj_get_int_maybe(exit_val, &val)) {
+            val = 1;
+        }
+        return FORCED_EXIT | (val & 255);
+    }
+
+    // Report all other exceptions
+    mp_obj_print_exception(printf_wrapper, NULL, exc);
+    return 1;
+}
+
+// Returns standard error codes: 0 for success, 1 for all other errors,
+// except if FORCED_EXIT bit is set then script raised SystemExit and the
+// value of the exit is in the lower 8 bits of the return value
 STATIC int execute_from_lexer(mp_lexer_t *lex, mp_parse_input_kind_t input_kind, bool is_repl) {
     if (lex == NULL) {
         return 1;
@@ -76,8 +115,8 @@ STATIC int execute_from_lexer(mp_lexer_t *lex, mp_parse_input_kind_t input_kind,
 
     if (0) {
         // just tokenise
-        while (!mp_lexer_is_kind(lex, MP_TOKEN_END)) {
-            mp_token_show(mp_lexer_cur(lex));
+        while (lex->tok_kind != MP_TOKEN_END) {
+            mp_lexer_show_token(lex);
             mp_lexer_to_next(lex);
         }
         mp_lexer_free(lex);
@@ -94,7 +133,7 @@ STATIC int execute_from_lexer(mp_lexer_t *lex, mp_parse_input_kind_t input_kind,
         return 1;
     }
 
-    qstr source_name = mp_lexer_source_name(lex);
+    qstr source_name = lex->source_name;
     #if MICROPY_PY___FILE__
     if (input_kind == MP_PARSE_FILE_INPUT) {
         mp_store_global(MP_QSTR___file__, MP_OBJ_NEW_QSTR(source_name));
@@ -110,8 +149,9 @@ STATIC int execute_from_lexer(mp_lexer_t *lex, mp_parse_input_kind_t input_kind,
 
     mp_obj_t module_fun = mp_compile(pn, source_name, emit_opt, is_repl);
 
-    if (module_fun == mp_const_none) {
+    if (mp_obj_is_exception_instance(module_fun)) {
         // compile error
+        mp_obj_print_exception(printf_wrapper, NULL, module_fun);
         return 1;
     }
 
@@ -119,27 +159,30 @@ STATIC int execute_from_lexer(mp_lexer_t *lex, mp_parse_input_kind_t input_kind,
         return 0;
     }
 
+    #ifndef _WIN32
+    // enable signal handler
+    struct sigaction sa;
+    sa.sa_handler = sighandler;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, NULL);
+    sa.sa_handler = SIG_DFL;
+    #endif
+
     // execute it
     nlr_buf_t nlr;
     if (nlr_push(&nlr) == 0) {
         mp_call_function_0(module_fun);
+        #ifndef _WIN32
+        sigaction(SIGINT, &sa, NULL);
+        #endif
         nlr_pop();
         return 0;
     } else {
         // uncaught exception
-        // check for SystemExit
-        mp_obj_t exc = (mp_obj_t)nlr.ret_val;
-        if (mp_obj_is_subclass_fast(mp_obj_get_type(exc), &mp_type_SystemExit)) {
-            // None is an exit value of 0; an int is its value; anything else is 1
-            mp_obj_t exit_val = mp_obj_exception_get_value(exc);
-            mp_int_t val = 0;
-            if (exit_val != mp_const_none && !mp_obj_get_int_maybe(exit_val, &val)) {
-                val = 1;
-            }
-            exit(val);
-        }
-        mp_obj_print_exception((mp_obj_t)nlr.ret_val);
-        return 1;
+        #ifndef _WIN32
+        sigaction(SIGINT, &sa, NULL);
+        #endif
+        return handle_uncaught_exception((mp_obj_t)nlr.ret_val);
     }
 }
 
@@ -157,14 +200,14 @@ STATIC char *strjoin(const char *s1, int sep_char, const char *s2) {
     return s;
 }
 
-STATIC void do_repl(void) {
+STATIC int do_repl(void) {
     printf("Micro Python " MICROPY_GIT_TAG " on " MICROPY_BUILD_DATE "; " MICROPY_PY_SYS_PLATFORM " version\n");
 
     for (;;) {
         char *line = prompt(">>> ");
         if (line == NULL) {
             // EOF
-            return;
+            return 0;
         }
         while (mp_repl_continue_with_input(line)) {
             char *line2 = prompt("... ");
@@ -178,7 +221,10 @@ STATIC void do_repl(void) {
         }
 
         mp_lexer_t *lex = mp_lexer_new_from_str_len(MP_QSTR__lt_stdin_gt_, line, strlen(line), false);
-        execute_from_lexer(lex, MP_PARSE_SINGLE_INPUT, true);
+        int ret = execute_from_lexer(lex, MP_PARSE_SINGLE_INPUT, true);
+        if (ret & FORCED_EXIT) {
+            return ret;
+        }
         free(line);
     }
 }
@@ -190,10 +236,10 @@ STATIC int do_file(const char *file) {
 
 STATIC int do_str(const char *str) {
     mp_lexer_t *lex = mp_lexer_new_from_str_len(MP_QSTR__lt_stdin_gt_, str, strlen(str), false);
-    return execute_from_lexer(lex, MP_PARSE_SINGLE_INPUT, false);
+    return execute_from_lexer(lex, MP_PARSE_FILE_INPUT, false);
 }
 
-int usage(char **argv) {
+STATIC int usage(char **argv) {
     printf(
 "usage: %s [<opts>] [-X <implopt>] [-c <command>] [<filename>]\n"
 "Options:\n"
@@ -222,27 +268,8 @@ int usage(char **argv) {
     return 1;
 }
 
-STATIC mp_obj_t mem_info(void) {
-    printf("mem: total=%d, current=%d, peak=%d\n",
-        m_get_total_bytes_allocated(), m_get_current_bytes_allocated(), m_get_peak_bytes_allocated());
-    printf("stack: " UINT_FMT "\n", mp_stack_usage());
-#if MICROPY_ENABLE_GC
-    gc_dump_info();
-#endif
-    return mp_const_none;
-}
-STATIC MP_DEFINE_CONST_FUN_OBJ_0(mem_info_obj, mem_info);
-
-STATIC mp_obj_t qstr_info(void) {
-    uint n_pool, n_qstr, n_str_data_bytes, n_total_bytes;
-    qstr_pool_info(&n_pool, &n_qstr, &n_str_data_bytes, &n_total_bytes);
-    printf("qstr pool: n_pool=%u, n_qstr=%u, n_str_data_bytes=%u, n_total_bytes=%u\n", n_pool, n_qstr, n_str_data_bytes, n_total_bytes);
-    return mp_const_none;
-}
-STATIC MP_DEFINE_CONST_FUN_OBJ_0(qstr_info_obj, qstr_info);
-
 // Process options which set interpreter init options
-void pre_process_options(int argc, char **argv) {
+STATIC void pre_process_options(int argc, char **argv) {
     for (int a = 1; a < argc; a++) {
         if (argv[a][0] == '-') {
             if (strcmp(argv[a], "-X") == 0) {
@@ -260,7 +287,27 @@ void pre_process_options(int argc, char **argv) {
                     emit_opt = MP_EMIT_OPT_VIPER;
 #if MICROPY_ENABLE_GC
                 } else if (strncmp(argv[a + 1], "heapsize=", sizeof("heapsize=") - 1) == 0) {
-                    heap_size = strtol(argv[a + 1] + sizeof("heapsize=") - 1, NULL, 0);
+                    char *end;
+                    heap_size = strtol(argv[a + 1] + sizeof("heapsize=") - 1, &end, 0);
+                    // Don't bring unneeded libc dependencies like tolower()
+                    // If there's 'w' immediately after number, adjust it for
+                    // target word size. Note that it should be *before* size
+                    // suffix like K or M, to avoid confusion with kilowords,
+                    // etc. the size is still in bytes, just can be adjusted
+                    // for word size (taking 32bit as baseline).
+                    bool word_adjust = false;
+                    if ((*end | 0x20) == 'w') {
+                        word_adjust = true;
+                        end++;
+                    }
+                    if ((*end | 0x20) == 'k') {
+                        heap_size *= 1024;
+                    } else if ((*end | 0x20) == 'm') {
+                        heap_size *= 1024 * 1024;
+                    }
+                    if (word_adjust) {
+                        heap_size = heap_size * BYTES_PER_WORD / 4;
+                    }
 #endif
                 } else {
                     exit(usage(argv));
@@ -268,6 +315,12 @@ void pre_process_options(int argc, char **argv) {
                 a++;
             }
         }
+    }
+}
+
+STATIC void set_sys_argv(char *argv[], int argc, int start_arg) {
+    for (int i = start_arg; i < argc; i++) {
+        mp_obj_list_append(mp_sys_argv, MP_OBJ_NEW_QSTR(qstr_from_str(argv[i])));
     }
 }
 
@@ -288,6 +341,11 @@ int main(int argc, char **argv) {
 #endif
 
     mp_init();
+
+    #ifndef _WIN32
+    // create keyboard interrupt object
+    keyboard_interrupt_obj = mp_obj_new_exception(&mp_type_KeyboardInterrupt);
+    #endif
 
     char *home = getenv("HOME");
     char *path = getenv("MICROPYPATH");
@@ -325,9 +383,6 @@ int main(int argc, char **argv) {
 
     mp_obj_list_init(mp_sys_argv, 0);
 
-    mp_store_name(qstr_from_str("mem_info"), (mp_obj_t*)&mem_info_obj);
-    mp_store_name(qstr_from_str("qstr_info"), (mp_obj_t*)&qstr_info_obj);
-
     // Here is some example code to create a class and instance of that class.
     // First is the Python, then the C code.
     //
@@ -357,7 +412,44 @@ int main(int argc, char **argv) {
                     return usage(argv);
                 }
                 ret = do_str(argv[a + 1]);
+                if (ret & FORCED_EXIT) {
+                    break;
+                }
                 a += 1;
+            } else if (strcmp(argv[a], "-m") == 0) {
+                if (a + 1 >= argc) {
+                    return usage(argv);
+                }
+                mp_obj_t import_args[4];
+                import_args[0] = mp_obj_new_str(argv[a + 1], strlen(argv[a + 1]), false);
+                import_args[1] = import_args[2] = mp_const_none;
+                // Ask __import__ to handle imported module specially - set its __name__
+                // to __main__, and also return this leaf module, not top-level package
+                // containing it.
+                import_args[3] = mp_const_false;
+                // TODO: https://docs.python.org/3/using/cmdline.html#cmdoption-m :
+                // "the first element of sys.argv will be the full path to
+                // the module file (while the module file is being located,
+                // the first element will be set to "-m")."
+                set_sys_argv(argv, argc, a + 1);
+
+                mp_obj_t mod;
+                nlr_buf_t nlr;
+                if (nlr_push(&nlr) == 0) {
+                    mod = mp_builtin___import__(MP_ARRAY_SIZE(import_args), import_args);
+                    nlr_pop();
+                } else {
+                    // uncaught exception
+                    return handle_uncaught_exception((mp_obj_t)nlr.ret_val);
+                }
+
+                if (mp_obj_is_package(mod)) {
+                    // TODO
+                    fprintf(stderr, "%s: -m for packages not yet implemented\n", argv[0]);
+                    exit(1);
+                }
+                ret = 0;
+                break;
             } else if (strcmp(argv[a], "-X") == 0) {
                 a += 1;
             } else if (strcmp(argv[a], "-v") == 0) {
@@ -388,20 +480,28 @@ int main(int argc, char **argv) {
             path_items[0] = MP_OBJ_NEW_QSTR(qstr_from_strn(basedir, p - basedir));
             free(pathbuf);
 
-            for (int i = a; i < argc; i++) {
-                mp_obj_list_append(mp_sys_argv, MP_OBJ_NEW_QSTR(qstr_from_str(argv[i])));
-            }
+            set_sys_argv(argv, argc, a);
             ret = do_file(argv[a]);
             break;
         }
     }
 
     if (ret == NOTHING_EXECUTED) {
-        do_repl();
-        ret = 0;
+        ret = do_repl();
+    }
+
+    if (mp_verbose_flag) {
+        extern mp_obj_t mp_micropython_mem_info(mp_uint_t n_args, const mp_obj_t *args);
+        mp_micropython_mem_info(0, NULL);
     }
 
     mp_deinit();
+
+#if MICROPY_ENABLE_GC && !defined(NDEBUG)
+    // We don't really need to free memory since we are about to exit the
+    // process, but doing so helps to find memory leaks.
+    free(heap);
+#endif
 
     //printf("total bytes = %d\n", m_get_total_bytes_allocated());
     return ret;

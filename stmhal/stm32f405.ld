@@ -11,15 +11,17 @@ MEMORY
     CCMRAM (xrw)    : ORIGIN = 0x10000000, LENGTH = 0x010000 /* 64 KiB */
     RAM (xrw)       : ORIGIN = 0x20000000, LENGTH = 0x020000 /* 128 KiB */
 }
- 
+
+ENTRY(Reset_Handler)
+
 /* produce a link error if there is not this amount of RAM for these sections */
 _minimum_stack_size = 2K;
 _minimum_heap_size = 16K;
  
-/* top end of the stack */
-
-/*_stack_end = ORIGIN(RAM) + LENGTH(RAM);*/
-_estack = ORIGIN(RAM) + LENGTH(RAM) - 1;
+/* Define tho top end of the stack.  The stack is full descending so begins just
+   above last byte of RAM.  Note that EABI requires the stack to be 8-byte
+   aligned for a call. */
+_estack = ORIGIN(RAM) + LENGTH(RAM);
 
 /* RAM extents for the garbage collector */
 _ram_end = ORIGIN(RAM) + LENGTH(RAM);
