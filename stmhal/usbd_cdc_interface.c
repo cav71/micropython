@@ -35,11 +35,18 @@
 /* Includes ------------------------------------------------------------------*/
 
 #include <stdbool.h>
+#include <stdint.h>
 
-#include "stm32f4xx_hal.h"
 #include "usbd_cdc_msc_hid.h"
 #include "usbd_cdc_interface.h"
 #include "pendsv.h"
+
+#include "py/mpstate.h"
+#include "py/obj.h"
+#include "lib/utils/interrupt_char.h"
+#include "irq.h"
+#include "timer.h"
+#include "usb.h"
 
 // CDC control commands
 #define CDC_SEND_ENCAPSULATED_COMMAND               0x00
@@ -72,12 +79,6 @@ static __IO uint16_t UserTxBufPtrOut = 0; // increment this pointer modulo APP_T
 static uint16_t UserTxBufPtrOutShadow = 0; // shadow of above
 static uint8_t UserTxBufPtrWaitCount = 0; // used to implement a timeout waiting for low-level USB driver
 static uint8_t UserTxNeedEmptyPacket = 0; // used to flush the USB IN endpoint if the last packet was exactly the endpoint packet size
-
-static int user_interrupt_char = -1;
-static void *user_interrupt_data = NULL;
-
-/* USB handler declaration */
-extern USBD_HandleTypeDef hUSBDDevice;
 
 /* Private function prototypes -----------------------------------------------*/
 static int8_t CDC_Itf_Init     (void);
@@ -138,10 +139,6 @@ static int8_t CDC_Itf_Init(void)
   TIM_Config();
 #endif
   
-    /*##-4- Start the TIM Base generation in interrupt mode ####################*/
-    /* Start Channel1 */
-    __HAL_TIM_ENABLE_IT(&TIM3_Handle, TIM_IT_UPDATE);
-  
     /*##-5- Set Application Buffers ############################################*/
     USBD_CDC_SetTxBuffer(&hUSBDDevice, UserTxBuffer, 0);
     USBD_CDC_SetRxBuffer(&hUSBDDevice, UserRxBuffer);
@@ -149,14 +146,6 @@ static int8_t CDC_Itf_Init(void)
     UserRxBufCur = 0;
     UserRxBufLen = 0;
   
-    /* NOTE: we cannot reset these here, because USBD_CDC_SetInterrupt
-     * may be called before this init function to set these values.
-     * This can happen if the USB enumeration occurs after the call to
-     * USBD_CDC_SetInterrupt.
-    user_interrupt_char = -1;
-    user_interrupt_data = NULL;
-    */
-
     return (USBD_OK);
 }
 
@@ -255,12 +244,10 @@ static int8_t CDC_Itf_Control(uint8_t cmd, uint8_t* pbuf, uint16_t length) {
     return USBD_OK;
 }
 
-/**
-  * @brief  TIM period elapsed callback
-  * @param  htim: TIM handle
-  * @retval None
-  */
-void USBD_CDC_HAL_TIM_PeriodElapsedCallback(void) {
+// This function is called to process outgoing data.  We hook directly into the
+// SOF (start of frame) callback so that it is called exactly at the time it is
+// needed (reducing latency), and often enough (increasing bandwidth).
+void HAL_PCD_SOFCallback(PCD_HandleTypeDef *hpcd) {
     if (!dev_is_connected) {
         // CDC device is not connected to a host, so we are unable to send any data
         return;
@@ -274,9 +261,8 @@ void USBD_CDC_HAL_TIM_PeriodElapsedCallback(void) {
     if (UserTxBufPtrOut != UserTxBufPtrOutShadow) {
         // We have sent data and are waiting for the low-level USB driver to
         // finish sending it over the USB in-endpoint.
-        // We have a 15 * 10ms = 150ms timeout
-        if (UserTxBufPtrWaitCount < 15) {
-            PCD_HandleTypeDef *hpcd = hUSBDDevice.pData;
+        // SOF occurs every 1ms, so we have a 150 * 1ms = 150ms timeout
+        if (UserTxBufPtrWaitCount < 150) {
             USB_OTG_GlobalTypeDef *USBx = hpcd->Instance;
             if (USBx_INEP(CDC_IN_EP & 0x7f)->DIEPTSIZ & USB_OTG_DIEPTSIZ_XFRSIZ) {
                 // USB in-endpoint is still reading the data
@@ -345,21 +331,21 @@ static int8_t CDC_Itf_Receive(uint8_t* Buf, uint32_t *Len) {
 
     uint32_t delta_len;
 
-    if (user_interrupt_char == -1) {
+    if (mp_interrupt_char == -1) {
         // no special interrupt character
         delta_len = *Len;
 
     } else {
-        // filter out sepcial interrupt character from the buffer
+        // filter out special interrupt character from the buffer
         bool char_found = false;
         uint8_t *dest = Buf;
         uint8_t *src = Buf;
         uint8_t *buf_top = Buf + *Len;
         for (; src < buf_top; src++) {
-            if (*src == user_interrupt_char) {
+            if (*src == mp_interrupt_char) {
                 char_found = true;
-                // raise exception when interrupts are finished
-                pendsv_nlr_jump(user_interrupt_data);
+                // raise KeyboardInterrupt when interrupts are finished
+                pendsv_kbd_intr();
             } else {
                 if (char_found) {
                     *dest = *src;
@@ -391,11 +377,6 @@ int USBD_CDC_IsConnected(void) {
     return dev_is_connected;
 }
 
-void USBD_CDC_SetInterrupt(int chr, void *data) {
-    user_interrupt_char = chr;
-    user_interrupt_data = data;
-}
-
 int USBD_CDC_TxHalfEmpty(void) {
     int32_t tx_waiting = (int32_t)UserTxBufPtrIn - (int32_t)UserTxBufPtrOut;
     if (tx_waiting < 0) {
@@ -414,6 +395,10 @@ int USBD_CDC_Tx(const uint8_t *buf, uint32_t len, uint32_t timeout) {
             // Wraparound of tick is taken care of by 2's complement arithmetic.
             if (HAL_GetTick() - start >= timeout) {
                 // timeout
+                return i;
+            }
+            if (query_irq() == IRQ_STATE_DISABLED) {
+                // IRQs disabled so buffer will never be drained; return immediately
                 return i;
             }
             __WFI(); // enter sleep mode, waiting for interrupt
@@ -443,11 +428,15 @@ void USBD_CDC_TxAlways(const uint8_t *buf, uint32_t len) {
             // (wraparound of tick is taken care of by 2's complement arithmetic).
             uint32_t start = HAL_GetTick();
             while (((UserTxBufPtrIn + 1) & (APP_TX_DATA_SIZE - 1)) == UserTxBufPtrOut && HAL_GetTick() - start <= 500) {
+                if (query_irq() == IRQ_STATE_DISABLED) {
+                    // IRQs disabled so buffer will never be drained; exit loop
+                    break;
+                }
                 __WFI(); // enter sleep mode, waiting for interrupt
             }
 
             // Some unused code that makes sure the low-level USB buffer is drained.
-            // Waiting for low-level is handled in USBD_CDC_HAL_TIM_PeriodElapsedCallback.
+            // Waiting for low-level is handled in HAL_PCD_SOFCallback.
             /*
             start = HAL_GetTick();
             PCD_HandleTypeDef *hpcd = hUSBDDevice.pData;
@@ -486,6 +475,10 @@ int USBD_CDC_Rx(uint8_t *buf, uint32_t len, uint32_t timeout) {
             // Wraparound of tick is taken care of by 2's complement arithmetic.
             if (HAL_GetTick() - start >= timeout) {
                 // timeout
+                return i;
+            }
+            if (query_irq() == IRQ_STATE_DISABLED) {
+                // IRQs disabled so buffer will never be filled; return immediately
                 return i;
             }
             __WFI(); // enter sleep mode, waiting for interrupt

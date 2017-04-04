@@ -38,6 +38,7 @@ enum {
   PORT_H,
   PORT_I,
   PORT_J,
+  PORT_K,
 };
 
 enum {
@@ -45,7 +46,9 @@ enum {
   AF_FN_I2C,
   AF_FN_USART,
   AF_FN_UART = AF_FN_USART,
-  AF_FN_SPI
+  AF_FN_SPI,
+  AF_FN_I2S,
+  AF_FN_SDMMC,
 };
 
 enum {
@@ -77,7 +80,34 @@ enum {
   AF_PIN_TYPE_SPI_MISO,
   AF_PIN_TYPE_SPI_SCK,
   AF_PIN_TYPE_SPI_NSS,
+
+  AF_PIN_TYPE_I2S_CK = 0,
+  AF_PIN_TYPE_I2S_MCK,
+  AF_PIN_TYPE_I2S_SD,
+  AF_PIN_TYPE_I2S_WS,
+  AF_PIN_TYPE_I2S_EXTSD,
+
+  AF_PIN_TYPE_SDMMC_CK = 0,
+  AF_PIN_TYPE_SDMMC_CMD,
+  AF_PIN_TYPE_SDMMC_D0,
+  AF_PIN_TYPE_SDMMC_D1,
+  AF_PIN_TYPE_SDMMC_D2,
+  AF_PIN_TYPE_SDMMC_D3,
 };
+
+// The HAL uses a slightly different naming than we chose, so we provide
+// some #defines to massage things. Also I2S and SPI share the same
+// peripheral.
+
+#define GPIO_AF5_I2S2   GPIO_AF5_SPI2
+#define GPIO_AF5_I2S3   GPIO_AF5_I2S3ext
+#define GPIO_AF6_I2S2   GPIO_AF6_I2S2ext
+#define GPIO_AF6_I2S3   GPIO_AF6_SPI3
+#define GPIO_AF7_I2S2   GPIO_AF7_SPI2
+#define GPIO_AF7_I2S3   GPIO_AF7_I2S3ext
+
+#define I2S2  SPI2
+#define I2S3  SPI3
 
 enum {
   PIN_ADC1  = (1 << 0),
@@ -85,12 +115,17 @@ enum {
   PIN_ADC3  = (1 << 2),
 };
 
+// Note that SPI and I2S are really the same peripheral as far as the HAL
+// is concerned, so there is no I2S_TypeDef.
+// We use void* for SDMMC because not all MCUs have the SDMMC_TypeDef type.
 #define PIN_DEFS_PORT_AF_UNION \
     TIM_TypeDef   *TIM; \
     I2C_TypeDef   *I2C; \
     USART_TypeDef *USART; \
     USART_TypeDef *UART; \
-    SPI_TypeDef   *SPI;
+    SPI_TypeDef   *SPI;\
+    SPI_TypeDef   *I2S; \
+    void          *SDMMC; \
 
 typedef GPIO_TypeDef pin_gpio_t;
 

@@ -9,13 +9,14 @@ include ../py/py.mk
 
 CROSS_COMPILE = arm-none-eabi-
 
-INC =  -I.
-INC += -I$(PY_SRC)
+INC += -I.
+INC += -I..
 INC += -I$(BUILD)
+INC += -I../tools/tinytest/
 
-CFLAGS_CORTEX_M3 = -mthumb -mcpu=cortex-m3
-CFLAGS = $(INC) -Wall -Wpointer-arith -Werror -ansi -std=gnu99 $(CFLAGS_CORTEX_M3) $(COPT) \
-	 -flto -ffunction-sections -fdata-sections
+CFLAGS_CORTEX_M3 = -mthumb -mcpu=cortex-m3 -mfloat-abi=soft
+CFLAGS = $(INC) -Wall -Wpointer-arith -Werror -std=gnu99 $(CFLAGS_CORTEX_M3) $(COPT) \
+	 -ffunction-sections -fdata-sections
 
 #Debugging/Optimization
 ifeq ($(DEBUG), 1)
@@ -33,15 +34,40 @@ endif
 ## - gcc-arm-none-eabi-4_8-2014q1/share/gcc-arm-none-eabi/samples/src/qemu/Makefile
 LDFLAGS= --specs=nano.specs --specs=rdimon.specs -Wl,--gc-sections -Wl,-Map=$(@:.elf=.map)
 
-ifeq ($(RUN_TESTS), 1)
-SRC_C = \
-	test_main.c \
-
-else
 SRC_C = \
 	main.c \
+	moduos.c \
+	modmachine.c \
 
-endif
+SRC_TEST_C = \
+	test_main.c \
+	moduos.c \
+	modmachine.c \
+
+LIB_SRC_C = $(addprefix lib/,\
+	libm/math.c \
+	libm/fmodf.c \
+	libm/nearbyintf.c \
+	libm/ef_sqrt.c \
+	libm/kf_rem_pio2.c \
+	libm/kf_sin.c \
+	libm/kf_cos.c \
+	libm/kf_tan.c \
+	libm/ef_rem_pio2.c \
+	libm/sf_sin.c \
+	libm/sf_cos.c \
+	libm/sf_tan.c \
+	libm/sf_frexp.c \
+	libm/sf_modf.c \
+	libm/sf_ldexp.c \
+	libm/asinfacosf.c \
+	libm/atanf.c \
+	libm/atan2f.c \
+	)
+
+STM_SRC_C = $(addprefix stmhal/,\
+	pybstdio.c \
+	)
 
 SRC_S = \
 
@@ -49,16 +75,29 @@ OBJ =
 OBJ += $(PY_O)
 OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_S:.s=.o))
+OBJ += $(addprefix $(BUILD)/, $(LIB_SRC_C:.c=.o))
+OBJ += $(addprefix $(BUILD)/, $(STM_SRC_C:.c=.o))
 
-ifeq ($(RUN_TESTS), 1)
-INC += -I../tools/tinytest/
-OBJ += $(BUILD)/tinytest.o
-endif
+OBJ_TEST =
+OBJ_TEST += $(PY_O)
+OBJ_TEST += $(addprefix $(BUILD)/, $(SRC_TEST_C:.c=.o))
+OBJ_TEST += $(addprefix $(BUILD)/, $(SRC_S:.s=.o))
+OBJ_TEST += $(addprefix $(BUILD)/, $(LIB_SRC_C:.c=.o))
+OBJ_TEST += $(addprefix $(BUILD)/, $(STM_SRC_C:.c=.o))
+OBJ_TEST += $(BUILD)/tinytest.o
+
+# List of sources for qstr extraction
+SRC_QSTR += $(SRC_C) $(STM_SRC_C)
 
 all: run
 
-run: $(BUILD)/flash.elf
-	qemu-system-arm -cpu cortex-m3 -nographic -monitor null -serial null -semihosting -kernel $(BUILD)/flash.elf
+run: $(BUILD)/firmware.elf
+	qemu-system-arm -machine integratorcp -cpu cortex-m3 -nographic -monitor null -serial null -semihosting -kernel $(BUILD)/firmware.elf
+
+test: $(BUILD)/firmware-test.elf
+	qemu-system-arm -machine integratorcp -cpu cortex-m3 -nographic -monitor null -serial null -semihosting -kernel $(BUILD)/firmware-test.elf > $(BUILD)/console.out
+	$(Q)tail -n2 $(BUILD)/console.out
+	$(Q)tail -n1 $(BUILD)/console.out | grep -q "status: 0"
 
 .PHONY: $(BUILD)/genhdr/tests.h
 
@@ -70,8 +109,12 @@ $(BUILD)/tinytest.o:
 	$(Q)$(CC) $(CFLAGS) -DNO_FORKING -o $@ -c ../tools/tinytest/tinytest.c
 
 ## `$(LD)` doesn't seem to like `--specs` for some reason, but we can just use `$(CC)` here.
-$(BUILD)/flash.elf: $(OBJ)
-	$(Q)$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJ) $(LIBS)
+$(BUILD)/firmware.elf: $(OBJ)
+	$(Q)$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS)
+	$(Q)$(SIZE) $@
+
+$(BUILD)/firmware-test.elf: $(OBJ_TEST)
+	$(Q)$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS)
 	$(Q)$(SIZE) $@
 
 include ../py/mkrules.mk

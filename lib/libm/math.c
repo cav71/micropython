@@ -45,8 +45,15 @@ typedef union {
     };
 } double_s_t;
 
+#if defined(__thumb__)
+
 double __attribute__((pcs("aapcs"))) __aeabi_i2d(int32_t x) {
     return (float)x;
+}
+
+// TODO
+long long __attribute__((pcs("aapcs"))) __aeabi_f2lz(float x) {
+    return (long)x;
 }
 
 double __attribute__((pcs("aapcs"))) __aeabi_f2d(float x) {
@@ -77,13 +84,7 @@ double __aeabi_dmul(double x , double y) {
 
 }
 
-float sqrtf(float x) {
-    asm volatile (
-            "vsqrt.f32  %[r], %[x]\n"
-            : [r] "=t" (x)
-            : [x] "t"  (x));
-    return x;
-}
+#endif // defined(__thumb__)
 
 #ifndef NDEBUG
 float copysignf(float x, float y) {
@@ -111,19 +112,6 @@ static const float _M_LN10 = 2.30258509299404; // 0x40135d8e
 float log10f(float x) { return logf(x) / (float)_M_LN10; }
 
 float tanhf(float x) { return sinhf(x) / coshf(x); }
-
-// TODO we need import these functions from some library (eg musl or newlib)
-float acoshf(float x) { return 0.0; }
-float asinhf(float x) { return 0.0; }
-float atanhf(float x) { return 0.0; }
-float tanf(float x) { return 0.0; }
-float tgammaf(float x) { return 0.0; }
-float lgammaf(float x) { return 0.0; }
-float erff(float x) { return 0.0; }
-float erfcf(float x) { return 0.0; }
-float modff(float x, float *y) { return 0.0; }
-float frexpf(float x, int *exp) { return 0.0; }
-float ldexpf(float x, int exp) { return 0.0; }
 
 /*****************************************************************************/
 /*****************************************************************************/

@@ -1,12 +1,7 @@
 #include <stdint.h>
 #include <mk20dx128.h>
-#include "mpconfig.h"
-#include "nlr.h"
-#include "misc.h"
-#include "qstr.h"
-#include "obj.h"
-#include "runtime.h"
-#include MICROPY_HAL_H
+#include "py/runtime.h"
+#include "py/mphal.h"
 #include "pin.h"
 
 // Returns the pin mode. This value returned by this macro should be one of:

@@ -23,8 +23,13 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+#ifndef __MICROPY_INCLUDED_PY_STACKCTRL_H__
+#define __MICROPY_INCLUDED_PY_STACKCTRL_H__
+
+#include "py/mpconfig.h"
 
 void mp_stack_ctrl_init(void);
+void mp_stack_set_top(void *top);
 mp_uint_t mp_stack_usage(void);
 
 #if MICROPY_STACK_CHECK
@@ -39,3 +44,5 @@ void mp_stack_check(void);
 #define MP_STACK_CHECK()
 
 #endif
+
+#endif // __MICROPY_INCLUDED_PY_STACKCTRL_H__

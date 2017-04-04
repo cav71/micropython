@@ -34,13 +34,9 @@
 
 #include <string.h>
 
-#include "stm32f4xx_hal.h"
-#include "mpconfig.h"
-#include "nlr.h"
-#include "misc.h"
-#include "qstr.h"
-#include "obj.h"
-#include "runtime.h"
+#include "py/nlr.h"
+#include "py/obj.h"
+#include "py/runtime.h"
 #include "pin.h"
 #include "led.h"
 #include "extint.h"
@@ -103,7 +99,7 @@ STATIC tSpiInformation sSpiInformation;
 STATIC char spi_buffer[CC3000_RX_BUFFER_SIZE];
 unsigned char wlan_tx_buffer[CC3000_TX_BUFFER_SIZE];
 
-STATIC const mp_obj_fun_builtin_t irq_callback_obj;
+STATIC const mp_obj_fun_builtin_fixed_t irq_callback_obj;
 
 // set the pins to use to communicate with the CC3000
 // the arguments must be of type pin_obj_t* and SPI_HandleTypeDef*
@@ -177,7 +173,7 @@ void SpiOpen(gcSpiHandleRx pfRxHandler)
     CS_HIGH();
 
     // register EXTI
-    extint_register((mp_obj_t)PIN_IRQ, GPIO_MODE_IT_FALLING, GPIO_PULLUP, (mp_obj_t)&irq_callback_obj, true, NULL);
+    extint_register((mp_obj_t)PIN_IRQ, GPIO_MODE_IT_FALLING, GPIO_PULLUP, (mp_obj_t)&irq_callback_obj, true);
     extint_enable(PIN_IRQ->pin);
 
     DEBUG_printf("SpiOpen finished; IRQ.pin=%d IRQ_LINE=%d\n", PIN_IRQ->pin, PIN_IRQ->pin);

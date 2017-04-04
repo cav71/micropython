@@ -27,48 +27,51 @@
 #include <stdio.h>
 #include <stdint.h>
 
-#include "mpconfig.h"
-#include "misc.h"
-#include "qstr.h"
-#include "obj.h"
-#include "gc.h"
+#include "py/mpstate.h"
+#include "py/obj.h"
+#include "py/gc.h"
+#include "py/mpthread.h"
 #include "gccollect.h"
-#include MICROPY_HAL_H
+#include "systick.h"
 
 mp_uint_t gc_helper_get_regs_and_sp(mp_uint_t *regs);
 
-// obsolete
-// void gc_helper_get_regs_and_clean_stack(mp_uint_t *regs, mp_uint_t heap_end);
-
 void gc_collect(void) {
     // get current time, in case we want to time the GC
-    uint32_t start = HAL_GetTick();
+    #if 0
+    uint32_t start = mp_hal_ticks_us();
+    #endif
 
     // start the GC
     gc_collect_start();
-
-    // We need to scan everything in RAM that can hold a pointer.
-    // The data segment is used, but should not contain pointers, so we just scan the bss.
-    gc_collect_root((void**)&_sbss, ((uint32_t)&_ebss - (uint32_t)&_sbss) / sizeof(uint32_t));
 
     // get the registers and the sp
     mp_uint_t regs[10];
     mp_uint_t sp = gc_helper_get_regs_and_sp(regs);
 
     // trace the stack, including the registers (since they live on the stack in this function)
+    #if MICROPY_PY_THREAD
+    gc_collect_root((void**)sp, ((uint32_t)MP_STATE_THREAD(stack_top) - sp) / sizeof(uint32_t));
+    #else
     gc_collect_root((void**)sp, ((uint32_t)&_ram_end - sp) / sizeof(uint32_t));
+    #endif
+
+    // trace root pointers from any threads
+    #if MICROPY_PY_THREAD
+    mp_thread_gc_others();
+    #endif
 
     // end the GC
     gc_collect_end();
 
-    if (0) {
-        // print GC info
-        uint32_t ticks = HAL_GetTick() - start; // TODO implement a function that does this properly
-        gc_info_t info;
-        gc_info(&info);
-        printf("GC@%lu %lums\n", start, ticks);
-        printf(" " UINT_FMT " total\n", info.total);
-        printf(" " UINT_FMT " : " UINT_FMT "\n", info.used, info.free);
-        printf(" 1=" UINT_FMT " 2=" UINT_FMT " m=" UINT_FMT "\n", info.num_1block, info.num_2block, info.max_block);
-    }
+    #if 0
+    // print GC info
+    uint32_t ticks = mp_hal_ticks_us() - start;
+    gc_info_t info;
+    gc_info(&info);
+    printf("GC@%lu %lums\n", start, ticks);
+    printf(" " UINT_FMT " total\n", info.total);
+    printf(" " UINT_FMT " : " UINT_FMT "\n", info.used, info.free);
+    printf(" 1=" UINT_FMT " 2=" UINT_FMT " m=" UINT_FMT "\n", info.num_1block, info.num_2block, info.max_block);
+    #endif
 }

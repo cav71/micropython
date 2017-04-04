@@ -23,5 +23,13 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+#ifndef __MICROPY_INCLUDED_PY_FORMATFLOAT_H__
+#define __MICROPY_INCLUDED_PY_FORMATFLOAT_H__
 
-int format_float(float f, char *buf, size_t bufSize, char fmt, int prec, char sign);
+#include "py/mpconfig.h"
+
+#if MICROPY_PY_BUILTINS_FLOAT
+int mp_format_float(mp_float_t f, char *buf, size_t bufSize, char fmt, int prec, char sign);
+#endif
+
+#endif // __MICROPY_INCLUDED_PY_FORMATFLOAT_H__

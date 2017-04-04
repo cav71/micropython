@@ -27,21 +27,26 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
-#include "mpconfig.h"
-#include "misc.h"
-#include "qstr.h"
-#include "nlr.h"
-#include "obj.h"
-#include "parsenumbase.h"
-#include "parsenum.h"
-#include "smallint.h"
-#include "runtime.h"
+#include "py/runtime.h"
+#include "py/parsenumbase.h"
+#include "py/parsenum.h"
+#include "py/smallint.h"
 
 #if MICROPY_PY_BUILTINS_FLOAT
 #include <math.h>
 #endif
 
-mp_obj_t mp_parse_num_integer(const char *restrict str_, mp_uint_t len, mp_uint_t base) {
+STATIC NORETURN void raise_exc(mp_obj_t exc, mp_lexer_t *lex) {
+    // if lex!=NULL then the parser called us and we need to convert the
+    // exception's type from ValueError to SyntaxError and add traceback info
+    if (lex != NULL) {
+        ((mp_obj_base_t*)MP_OBJ_TO_PTR(exc))->type = &mp_type_SyntaxError;
+        mp_obj_exception_add_traceback(exc, lex->source_name, lex->tok_line, MP_QSTR_NULL);
+    }
+    nlr_raise(exc);
+}
+
+mp_obj_t mp_parse_num_integer(const char *restrict str_, size_t len, int base, mp_lexer_t *lex) {
     const byte *restrict str = (const byte *)str_;
     const byte *restrict top = str + len;
     bool neg = false;
@@ -49,7 +54,8 @@ mp_obj_t mp_parse_num_integer(const char *restrict str_, mp_uint_t len, mp_uint_
 
     // check radix base
     if ((base != 0 && base < 2) || base > 36) {
-        nlr_raise(mp_obj_new_exception_msg(&mp_type_ValueError, "int() arg 2 must be >= 2 and <= 36"));
+        // this won't be reached if lex!=NULL
+        mp_raise_ValueError("int() arg 2 must be >= 2 and <= 36");
     }
 
     // skip leading space
@@ -75,20 +81,18 @@ mp_obj_t mp_parse_num_integer(const char *restrict str_, mp_uint_t len, mp_uint_
     for (; str < top; str++) {
         // get next digit as a value
         mp_uint_t dig = *str;
-        if (unichar_isdigit(dig) && dig - '0' < base) {
-            // 0-9 digit
-            dig = dig - '0';
-        } else if (base == 16) {
-            dig |= 0x20;
-            if ('a' <= dig && dig <= 'f') {
-                // a-f hex digit
-                dig = dig - 'a' + 10;
+        if ('0' <= dig && dig <= '9') {
+            dig -= '0';
+        } else {
+            dig |= 0x20; // make digit lower-case
+            if ('a' <= dig && dig <= 'z') {
+                dig -= 'a' - 10;
             } else {
                 // unknown character
                 break;
             }
-        } else {
-            // unknown character
+        }
+        if (dig >= (mp_uint_t)base) {
             break;
         }
 
@@ -139,11 +143,22 @@ overflow:
 
 value_error:
     if (MICROPY_ERROR_REPORTING == MICROPY_ERROR_REPORTING_TERSE) {
-        nlr_raise(mp_obj_new_exception_msg(&mp_type_ValueError,
-            "invalid syntax for integer"));
+        mp_obj_t exc = mp_obj_new_exception_msg(&mp_type_ValueError,
+            "invalid syntax for integer");
+        raise_exc(exc, lex);
+    } else if (MICROPY_ERROR_REPORTING == MICROPY_ERROR_REPORTING_NORMAL) {
+        mp_obj_t exc = mp_obj_new_exception_msg_varg(&mp_type_ValueError,
+            "invalid syntax for integer with base %d", base);
+        raise_exc(exc, lex);
     } else {
-        nlr_raise(mp_obj_new_exception_msg_varg(&mp_type_ValueError,
-            "invalid syntax for integer with base %d: '%s'", base, str));
+        vstr_t vstr;
+        mp_print_t print;
+        vstr_init_print(&vstr, 50, &print);
+        mp_printf(&print, "invalid syntax for integer with base %d: ", base);
+        mp_str_print_quoted(&print, str_val_start, top - str_val_start, true);
+        mp_obj_t exc = mp_obj_new_exception_arg1(&mp_type_ValueError,
+            mp_obj_new_str_from_vstr(&mp_type_str, &vstr));
+        raise_exc(exc, lex);
     }
 }
 
@@ -153,7 +168,7 @@ typedef enum {
     PARSE_DEC_IN_EXP,
 } parse_dec_in_t;
 
-mp_obj_t mp_parse_num_decimal(const char *str, mp_uint_t len, bool allow_imag, bool force_complex) {
+mp_obj_t mp_parse_num_decimal(const char *str, size_t len, bool allow_imag, bool force_complex, mp_lexer_t *lex) {
 #if MICROPY_PY_BUILTINS_FLOAT
     const char *top = str + len;
     mp_float_t dec_val = 0;
@@ -173,6 +188,8 @@ mp_obj_t mp_parse_num_decimal(const char *str, mp_uint_t len, bool allow_imag, b
             dec_neg = true;
         }
     }
+
+    const char *str_val_start = str;
 
     // determine what the string is
     if (str < top && (str[0] | 0x20) == 'i') {
@@ -197,36 +214,43 @@ mp_obj_t mp_parse_num_decimal(const char *str, mp_uint_t len, bool allow_imag, b
         // string should be a decimal number
         parse_dec_in_t in = PARSE_DEC_IN_INTG;
         bool exp_neg = false;
+        mp_float_t frac_mult = 0.1;
         mp_int_t exp_val = 0;
-        mp_int_t exp_extra = 0;
-        for (; str < top; str++) {
-            mp_uint_t dig = *str;
+        while (str < top) {
+            mp_uint_t dig = *str++;
             if ('0' <= dig && dig <= '9') {
                 dig -= '0';
                 if (in == PARSE_DEC_IN_EXP) {
                     exp_val = 10 * exp_val + dig;
                 } else {
-                    dec_val = 10 * dec_val + dig;
                     if (in == PARSE_DEC_IN_FRAC) {
-                        exp_extra -= 1;
+                        dec_val += dig * frac_mult;
+                        frac_mult *= MICROPY_FLOAT_CONST(0.1);
+                    } else {
+                        dec_val = 10 * dec_val + dig;
                     }
                 }
             } else if (in == PARSE_DEC_IN_INTG && dig == '.') {
                 in = PARSE_DEC_IN_FRAC;
             } else if (in != PARSE_DEC_IN_EXP && ((dig | 0x20) == 'e')) {
                 in = PARSE_DEC_IN_EXP;
-                if (str[1] == '+') {
-                    str++;
-                } else if (str[1] == '-') {
-                    str++;
-                    exp_neg = true;
+                if (str < top) {
+                    if (str[0] == '+') {
+                        str++;
+                    } else if (str[0] == '-') {
+                        str++;
+                        exp_neg = true;
+                    }
+                }
+                if (str == top) {
+                    goto value_error;
                 }
             } else if (allow_imag && (dig | 0x20) == 'j') {
-                str++;
                 imag = true;
                 break;
             } else {
                 // unknown character
+                str--;
                 break;
             }
         }
@@ -235,20 +259,19 @@ mp_obj_t mp_parse_num_decimal(const char *str, mp_uint_t len, bool allow_imag, b
         if (exp_neg) {
             exp_val = -exp_val;
         }
-        exp_val += exp_extra;
 
         // apply the exponent
-        for (; exp_val > 0; exp_val--) {
-            dec_val *= 10;
-        }
-        for (; exp_val < 0; exp_val++) {
-            dec_val *= 0.1;
-        }
+        dec_val *= MICROPY_FLOAT_C_FUN(pow)(10, exp_val);
     }
 
     // negate value if needed
     if (dec_neg) {
         dec_val = -dec_val;
+    }
+
+    // check we parsed something
+    if (str == str_val_start) {
+        goto value_error;
     }
 
     // skip trailing space
@@ -257,7 +280,7 @@ mp_obj_t mp_parse_num_decimal(const char *str, mp_uint_t len, bool allow_imag, b
 
     // check we reached the end of the string
     if (str != top) {
-        nlr_raise(mp_obj_new_exception_msg(&mp_type_SyntaxError, "invalid syntax for number"));
+        goto value_error;
     }
 
     // return the object
@@ -268,13 +291,16 @@ mp_obj_t mp_parse_num_decimal(const char *str, mp_uint_t len, bool allow_imag, b
         return mp_obj_new_complex(dec_val, 0);
 #else
     if (imag || force_complex) {
-        mp_not_implemented("complex values not supported");
+        raise_exc(mp_obj_new_exception_msg(&mp_type_ValueError, "complex values not supported"), lex);
 #endif
     } else {
         return mp_obj_new_float(dec_val);
     }
 
+value_error:
+    raise_exc(mp_obj_new_exception_msg(&mp_type_ValueError, "invalid syntax for number"), lex);
+
 #else
-    nlr_raise(mp_obj_new_exception_msg(&mp_type_SyntaxError, "decimal numbers not supported"));
+    raise_exc(mp_obj_new_exception_msg(&mp_type_ValueError, "decimal numbers not supported"), lex);
 #endif
 }

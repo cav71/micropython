@@ -1,9 +1,10 @@
 /*
- * This file is part of the Micro Python project, http://micropython.org/
+ * This file is part of the MicroPython project, http://micropython.org/
  *
  * The MIT License (MIT)
  *
  * Copyright (c) 2013, 2014 Damien P. George
+ * Copyright (c) 2014 Paul Sokolovsky
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,4 +25,19 @@
  * THE SOFTWARE.
  */
 
-mp_obj_t mp_obj_new_bytearray(mp_uint_t n, void *items);
+#ifndef __MICROPY_INCLUDED_PY_OBJARRAY_H__
+#define __MICROPY_INCLUDED_PY_OBJARRAY_H__
+
+#include "py/obj.h"
+
+typedef struct _mp_obj_array_t {
+    mp_obj_base_t base;
+    size_t typecode : 8;
+    // free is number of unused elements after len used elements
+    // alloc size = len + free
+    size_t free : (8 * sizeof(size_t) - 8);
+    size_t len; // in elements
+    void *items;
+} mp_obj_array_t;
+
+#endif // __MICROPY_INCLUDED_PY_OBJARRAY_H__

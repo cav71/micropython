@@ -25,29 +25,45 @@
  */
 
 #include <stdio.h>
-#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
 
-#include "mpconfig.h"
-#include "nlr.h"
-#include "misc.h"
-#include "qstr.h"
-#include "obj.h"
+#include "py/mpstate.h"
+#include "py/mphal.h"
 #include "input.h"
 
-#if MICROPY_USE_READLINE
-#include <readline/readline.h>
-#include <readline/history.h>
+#if MICROPY_USE_READLINE == 1
+#include "lib/mp-readline/readline.h"
 #endif
 
 char *prompt(char *p) {
-#if MICROPY_USE_READLINE
-    char *line = readline(p);
-    if (line) {
-        add_history(line);
+#if MICROPY_USE_READLINE == 1
+    // MicroPython supplied readline
+    vstr_t vstr;
+    vstr_init(&vstr, 16);
+    mp_hal_stdio_mode_raw();
+    int ret = readline(&vstr, p);
+    mp_hal_stdio_mode_orig();
+    if (ret != 0) {
+        vstr_clear(&vstr);
+        if (ret == CHAR_CTRL_D) {
+            // EOF
+            printf("\n");
+            return NULL;
+        } else {
+            printf("\n");
+            char *line = malloc(1);
+            line[0] = '\0';
+            return line;
+        }
     }
+    vstr_null_terminated_str(&vstr);
+    char *line = malloc(vstr.len + 1);
+    memcpy(line, vstr.buf, vstr.len + 1);
+    vstr_clear(&vstr);
 #else
+    // simple read string
     static char buf[256];
     fputs(p, stdout);
     char *s = fgets(buf, sizeof(buf), stdin);
@@ -66,7 +82,69 @@ char *prompt(char *p) {
     return line;
 }
 
-STATIC mp_obj_t mp_builtin_input(uint n_args, const mp_obj_t *args) {
+void prompt_read_history(void) {
+#if MICROPY_USE_READLINE_HISTORY
+    #if MICROPY_USE_READLINE == 1
+    readline_init0(); // will clear history pointers
+    char *home = getenv("HOME");
+    if (home != NULL) {
+        vstr_t vstr;
+        vstr_init(&vstr, 50);
+        vstr_printf(&vstr, "%s/.micropython.history", home);
+        int fd = open(vstr_null_terminated_str(&vstr), O_RDONLY);
+        if (fd != -1) {
+            vstr_reset(&vstr);
+            for (;;) {
+                char c;
+                int sz = read(fd, &c, 1);
+                if (sz < 0) {
+                    break;
+                }
+                if (sz == 0 || c == '\n') {
+                    readline_push_history(vstr_null_terminated_str(&vstr));
+                    if (sz == 0) {
+                        break;
+                    }
+                    vstr_reset(&vstr);
+                } else {
+                    vstr_add_byte(&vstr, c);
+                }
+            }
+            close(fd);
+        }
+        vstr_clear(&vstr);
+    }
+    #endif
+#endif
+}
+
+void prompt_write_history(void) {
+#if MICROPY_USE_READLINE_HISTORY
+    #if MICROPY_USE_READLINE == 1
+    char *home = getenv("HOME");
+    if (home != NULL) {
+        vstr_t vstr;
+        vstr_init(&vstr, 50);
+        vstr_printf(&vstr, "%s/.micropython.history", home);
+        int fd = open(vstr_null_terminated_str(&vstr), O_CREAT | O_TRUNC | O_WRONLY, 0644);
+        if (fd != -1) {
+            for (int i = MP_ARRAY_SIZE(MP_STATE_PORT(readline_hist)) - 1; i >= 0; i--) {
+                const char *line = MP_STATE_PORT(readline_hist)[i];
+                if (line != NULL) {
+                    int res;
+                    res = write(fd, line, strlen(line));
+                    res = write(fd, "\n", 1);
+                    (void)res;
+                }
+            }
+            close(fd);
+        }
+    }
+    #endif
+#endif
+}
+
+STATIC mp_obj_t mp_builtin_input(size_t n_args, const mp_obj_t *args) {
     if (n_args == 1) {
         mp_obj_print(args[0], PRINT_STR);
     }
@@ -79,5 +157,4 @@ STATIC mp_obj_t mp_builtin_input(uint n_args, const mp_obj_t *args) {
     free(line);
     return o;
 }
-
 MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mp_builtin_input_obj, 0, 1, mp_builtin_input);

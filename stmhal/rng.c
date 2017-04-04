@@ -26,12 +26,9 @@
 
 #include <string.h>
 
-#include "stm32f4xx_hal.h"
+#include STM32_HAL_H
 
-#include "mpconfig.h"
-#include "misc.h"
-#include "qstr.h"
-#include "obj.h"
+#include "py/obj.h"
 #include "rng.h"
 
 #if MICROPY_HW_ENABLE_RNG

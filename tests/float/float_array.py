@@ -1,4 +1,9 @@
-from array import array
+try:
+    from array import array
+except ImportError:
+    import sys
+    print("SKIP")
+    sys.exit()
 
 def test(a):
     print(a)
@@ -12,3 +17,5 @@ def test(a):
 
 test(array('f'))
 test(array('d'))
+
+print('{:.4f}'.format(array('f', b'\xcc\xcc\xcc=')[0]))

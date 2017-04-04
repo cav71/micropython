@@ -25,20 +25,15 @@
  */
 
 #include <stdio.h>
-#include <stdint.h>
 #include <string.h>
 
-#include "mpconfig.h"
-#include "misc.h"
-#include "qstr.h"
-#include "obj.h"
-#include "runtime.h"
-#include MICROPY_HAL_H
+#include "py/runtime.h"
+#include "py/mphal.h"
 #include "pin.h"
 
-STATIC void pin_named_pins_obj_print(void (*print)(void *env, const char *fmt, ...), void *env, mp_obj_t self_in, mp_print_kind_t kind) {
+STATIC void pin_named_pins_obj_print(const mp_print_t *print, mp_obj_t self_in, mp_print_kind_t kind) {
     pin_named_pins_obj_t *self = self_in;
-    print(env, "<Pin.%s>", qstr_str(self->name));
+    mp_printf(print, "<Pin.%q>", self->name);
 }
 
 const mp_obj_type_t pin_cpu_pins_obj_type = {

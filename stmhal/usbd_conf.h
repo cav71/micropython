@@ -34,12 +34,12 @@
 #define __USBD_CONF_H
 
 /* Includes ------------------------------------------------------------------*/
-#include "stm32f4xx_hal.h"
+#include STM32_HAL_H
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "mpconfig.h"
+#include "py/mpconfig.h"
 
 /* Exported types ------------------------------------------------------------*/
 /* Exported constants --------------------------------------------------------*/

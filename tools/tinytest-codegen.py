@@ -45,12 +45,19 @@ testgroup_member = (
 )
 
 ## XXX: may be we could have `--without <groups>` argument...
-test_dirs = ('basics', 'float', 'import', 'io', 'misc')
+# currently these tests are selected because they pass on qemu-arm
+test_dirs = ('basics', 'micropython', 'float', 'extmod', 'inlineasm') # 'import', 'io', 'misc')
+exclude_tests = (
+    'float/float2int_doubleprec_intbig.py', # requires double precision floating point to work
+    'inlineasm/asmfpaddsub.py', 'inlineasm/asmfpcmp.py', 'inlineasm/asmfpldrstr.py', 'inlineasm/asmfpmuldiv.py', 'inlineasm/asmfpsqrt.py',
+    'extmod/ticks_diff.py', 'extmod/time_ms_us.py', 'extmod/uheapq_timeq.py',
+    'extmod/vfs_fat_ramdisk.py', 'extmod/vfs_fat_fileio.py', 'extmod/vfs_fat_fsusermount.py', 'extmod/vfs_fat_oldproto.py',
+)
 
 output = []
 
 for group in test_dirs:
-  tests = glob('{}/*.py'.format(group))
+  tests = [test for test in glob('{}/*.py'.format(group)) if test not in exclude_tests]
   output.extend([test_function.format(**script_to_map(test)) for test in tests])
   testcase_members = [testcase_member.format(**chew_filename(test)) for test in tests]
   output.append(testcase_struct.format(name=group, body='\n'.join(testcase_members)))

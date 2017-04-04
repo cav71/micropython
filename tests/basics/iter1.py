@@ -1,5 +1,23 @@
 # test user defined iterators
 
+# this class is not iterable
+class NotIterable:
+    pass
+try:
+    for i in NotIterable():
+        pass
+except TypeError:
+    print('TypeError')
+
+# this class has no __next__ implementation
+class NotIterable:
+    def __iter__(self):
+        return self
+try:
+    print(all(NotIterable()))
+except TypeError:
+    print('TypeError')
+
 class MyStopIteration(StopIteration):
     pass
 

@@ -24,18 +24,8 @@
  * THE SOFTWARE.
  */
 
-// qstrs specific to this port
+// qstrs specific to this port, only needed if they aren't auto-generated
 
-Q(help)
-
-// pyb module
-Q(pyb)
-Q(info)
-Q(freq)
-Q(millis)
-Q(elapsed_millis)
-Q(micros)
-Q(elapsed_micros)
-Q(delay)
-Q(udelay)
-Q(sync)
+// Entries for sys.path
+Q(/flash)
+Q(/flash/lib)

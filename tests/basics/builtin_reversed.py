@@ -1,4 +1,10 @@
 # test the builtin reverse() function
+try:
+    reversed
+except:
+    import sys
+    print("SKIP")
+    sys.exit()
 
 # list
 print(list(reversed([])))
@@ -31,3 +37,9 @@ class A:
         return pos + 1
 for a in reversed(A()):
     print(a)
+
+# user object with __reversed__
+class B:
+    def __reversed__(self):
+        return [1, 2, 3]
+print(reversed(B()))

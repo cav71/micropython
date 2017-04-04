@@ -1,4 +1,9 @@
-import uctypes
+try:
+    import uctypes
+except ImportError:
+    import sys
+    print("SKIP")
+    sys.exit()
 
 S1 = {}
 assert uctypes.sizeof(S1) == 0
@@ -32,7 +37,7 @@ S5 = {
 
 assert uctypes.sizeof(S5) == 12
 
-s5 = uctypes.struct(S5, 0)
+s5 = uctypes.struct(0, S5)
 assert uctypes.sizeof(s5) == 12
 assert uctypes.sizeof(s5.sub) == 2
 
